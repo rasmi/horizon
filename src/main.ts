@@ -6,7 +6,7 @@ import { axisFor, nightAxis, type TimeAxis } from './axis';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
-import { lookAt, streetViewHfov, type Camera } from './projection';
+import { streetViewHfov, type Camera } from './projection';
 import { flushState, readState, shownBodies, writeState, type Twilight } from './state';
 import { formatReadoutDate, formatTime, isoDate, nightWindow, shiftDays, tzAbbrev, wallTime, zonedToDate } from './time';
 
@@ -109,20 +109,23 @@ function recompute(): void {
   state.bodies = shownBodies(onByDefault, state.overrides);
   syncTimeControls();
   renderInfoPanel();
-  follow();
   requestRender();
 }
 
-/** The object the view is locked onto, while its plot is being dragged. */
+/**
+ * The object the view is locked onto: the one last turned to (its name
+ * pressed, or its plot dragged). The view then follows it as the time
+ * changes, until the visitor drags the view away themselves.
+ */
 let following: BodyId | null = null;
 
 /**
- * Turns the view to keep the followed object in it as the time changes. It
- * always faces the object's direction. It tilts up with the object only so
- * far as keeps the horizon in view, near the bottom: beyond that the tilt
- * holds and the object climbs up the view instead, until it nears the top,
- * when the tilt has to follow again. Below the horizon the view stays level,
- * already looking at where the object will come up.
+ * Turns the view to the followed object, keeping it in view as the time
+ * changes. It always faces the object's direction. It tilts up with the
+ * object only so far as keeps the horizon in view, near the bottom: beyond
+ * that the tilt holds and the object climbs up the view instead, until it
+ * nears the top, when the tilt has to follow again. Below the horizon the
+ * view stays level, already looking at where the object will come up.
  */
 function follow(): void {
   const pos = following && night && interpolate(night.bodies.get(following)?.samples ?? [], state.time.getTime());
@@ -220,16 +223,13 @@ function renderInfoPanel(): void {
     onToggle: toggleBody,
     onLook: lookAtBody,
     onDetails: renderInfoPanel,
-    // Dragging along an object's own plot keeps the view on that object.
+    // Dragging along an object's own plot locks the view onto that object.
     onScrub: (fraction, id) => {
       pauseForScrub();
       following = id;
       dragTo(fraction);
     },
-    onScrubEnd: () => {
-      following = null;
-      stopEdgeRun();
-    },
+    onScrubEnd: stopEdgeRun,
     onJump: jumpTo,
   });
 }
@@ -249,6 +249,7 @@ function toggleBody(id: BodyId): void {
   if (on === onByDefault.includes(id)) delete state.overrides[id];
   else state.overrides[id] = on;
   state.bodies = shownBodies(onByDefault, state.overrides);
+  if (!on && following === id) following = null;
   renderInfoPanel();
   requestRender();
   writeState(state);
@@ -263,6 +264,7 @@ function jumpTo(t: Date): void {
 function setTime(t: Date): void {
   state.time = t;
   recompute();
+  follow();
   writeState(state);
 }
 
@@ -303,7 +305,9 @@ function lookAtBody(id: BodyId): void {
   if (!pano || !pos) return;
   setSheetOpen(false);
   els.overlay.classList.add('turning');
-  pano.setPov(lookAt(pos.alt, pos.az));
+  // Turn to it, framed as it will be while followed, and stay locked onto it.
+  following = id;
+  follow();
   window.clearTimeout(turnTimer);
   turnTimer = window.setTimeout(() => els.overlay.classList.remove('turning'), 700);
 }
@@ -727,9 +731,9 @@ function edgeTick(now: number): void {
       renderInfoPanel();
       edge.lastInfo = now;
     }
-    follow();
     requestRender();
   }
+  follow();
   edge.frame = requestAnimationFrame(edgeTick);
 }
 
@@ -1017,6 +1021,7 @@ function setPlaying(on: boolean): void {
       renderInfoPanel();
       lastInfo = now;
     }
+    follow();
     requestRender();
     playing = requestAnimationFrame(tick);
   };
@@ -1058,16 +1063,34 @@ els.infoDialog.addEventListener('click', (e) => {
 });
 
 // Track the collapsed sheet height for the mobile layout.
-new ResizeObserver(() => {
+function measureSheet(): void {
   if (!els.panel.classList.contains('open') && getComputedStyle(els.panel).position === 'fixed') {
     document.documentElement.style.setProperty('--sheet-h', `${els.panel.offsetHeight}px`);
   }
-}).observe(els.panel);
+}
+new ResizeObserver(measureSheet).observe(els.panel);
+
+/**
+ * Puts the page back where it belongs once the on-screen keyboard has gone.
+ * To show a focused field, a phone's browser scrolls the page under the
+ * sheet, and can leave it there afterwards: Street View and the map button
+ * then sit out of place against the sheet until something lays the page out
+ * again. So scroll it back, and re-measure the sheet.
+ */
+function settleSheet(): void {
+  // (Not while the sheet is open: that may be the search being typed in.)
+  if (els.panel.classList.contains('open') || getComputedStyle(els.panel).position !== 'fixed') return;
+  window.scrollTo(0, 0);
+  measureSheet();
+}
+window.visualViewport?.addEventListener('resize', settleSheet);
 
 function setSheetOpen(open: boolean): void {
   els.panel.classList.toggle('open', open);
   els.handle.setAttribute('aria-expanded', String(open));
   els.handle.setAttribute('aria-label', open ? 'Collapse panel' : 'Expand panel');
+  // Closing it from a search leaves the keyboard on its way out.
+  if (!open) for (const ms of [0, 350]) window.setTimeout(settleSheet, ms);
 }
 els.handle.addEventListener('click', () => setSheetOpen(!els.panel.classList.contains('open')));
 
@@ -1103,7 +1126,12 @@ const LOOKING_AROUND_DEG = 25;
 /** POV changes this close together belong to one continuous movement. */
 const SAME_MOVE_MS = 300;
 const lookingAround = { dragging: false, ms: 0, deg: 0, last: 0, heading: 0, pitch: 0 };
-els.pano.addEventListener('pointerdown', () => ((lookingAround.dragging = true), (lookingAround.last = 0)), true);
+els.pano.addEventListener('pointerdown', () => {
+  lookingAround.dragging = true;
+  lookingAround.last = 0;
+  // Taking hold of the view lets go of any object it was locked onto.
+  following = null;
+}, true);
 for (const type of ['pointerup', 'pointercancel']) {
   window.addEventListener(type, () => (lookingAround.dragging = false), true);
 }

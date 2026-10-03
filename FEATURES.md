@@ -101,8 +101,11 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   and its peak altitude, jumps to that moment.
 - An open plot can be dragged along to scrub the time, like the slider,
   including holding it past either end to run on into the next or previous
-  night. While you drag an object's plot the view stays on that object,
-  following it across the sky (and along the horizon while it's below).
+  night.
+- Clicking an object's name, or dragging its plot, locks the view onto it:
+  as the time then changes (the slider, playback, the day arrows) the view
+  follows it across the sky, and along the horizon while it's below. Dragging
+  the view yourself, or switching the object off, lets go.
 - Click a row's plot to open it. The plot grows taller and its events are
   written under it at their own times along the axis: the rise, transit
   (with the peak altitude, also dotted on the curve) and set of tonight's
