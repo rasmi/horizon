@@ -1,0 +1,1159 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --panel: rgba(16, 20, 28, 0.94);
+  --panel-solid: #10141c;
+  --line: rgba(255, 255, 255, 0.1);
+  --text: #e8ebf1;
+  --muted: #9aa3b2;
+  --accent: #ffb454;
+  --good: #7ddc8f;
+  --radius: 12px;
+  --panel-w: 360px;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* ---------- layout ---------- */
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr var(--panel-w);
+}
+
+#view {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+}
+
+#pano,
+#overlay {
+  position: absolute;
+  inset: 0;
+}
+
+#overlay {
+  pointer-events: none;
+  transition: opacity 0.15s;
+  /* Above the panorama, but leave room for Street View's own controls. */
+  z-index: 1;
+}
+
+.overlay-canvas,
+.overlay-markers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.hint {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  z-index: 3;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+}
+
+body:not(.landing) .hint {
+  display: none;
+}
+
+.hint-locate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-height: 32px;
+}
+
+.hint-locate svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Map: full view while choosing a spot, inset once in Street View. */
+#map-wrap {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  /* Clear of Street View's Google logo (26 px tall, bottom-left), which must stay visible. */
+  bottom: 34px;
+  width: 260px;
+  height: 180px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  transition:
+    width 0.2s,
+    height 0.2s;
+}
+
+#map {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Imagery date bar across the top of the map card; collapses with it. */
+.imagery {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--panel-solid);
+  border-bottom: 1px solid var(--line);
+}
+
+.imagery[hidden],
+body.landing .imagery,
+body.map-hidden .imagery {
+  display: none;
+}
+
+.imagery .icon-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  flex: none;
+  background: transparent;
+  border-color: transparent;
+}
+
+.imagery .icon-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+#cap-select {
+  flex: 1;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+/* Grow the card by the bar's height so the map keeps its size. */
+body.has-imagery:not(.map-hidden):not(.landing) #map-wrap {
+  height: 217px;
+}
+
+body.has-imagery:not(.map-hidden):not(.landing) #map-toggle {
+  top: 43px;
+}
+
+body.landing #map-wrap {
+  left: 0;
+  top: 0;
+  bottom: auto;
+  width: calc(100% - var(--panel-w));
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+}
+
+body.landing #map-toggle {
+  display: none;
+}
+
+/* Collapsed: the card becomes a frosted, translucent square holding a map
+   icon. The button fills it, so there's no inner dark block. */
+body.map-hidden:not(.landing) #map-wrap {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(16, 20, 28, 0.35);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+body.map-hidden #map {
+  visibility: hidden;
+}
+
+#map-toggle {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
+#map-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Solid on hover: the shared translucent hover looks see-through over the map. */
+#map-toggle:hover {
+  background: #2a3140;
+}
+
+body.map-hidden #map-toggle {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #fff;
+}
+
+body.map-hidden #map-toggle:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* While open, a chevron pointing the way the card collapses: down on desktop
+   (the card sits at the bottom), up on phones (it sits at the top). */
+#map-toggle .i-chevron {
+  transform: rotate(180deg);
+}
+
+#map-toggle .i-map,
+body.map-hidden #map-toggle .i-chevron {
+  display: none;
+}
+
+body.map-hidden #map-toggle .i-map {
+  display: block;
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+/* ---------- panel ---------- */
+
+#panel {
+  position: relative;
+  z-index: 4;
+  background: var(--panel-solid);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+#sheet-handle {
+  display: none;
+}
+
+.head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.icon-btn.line-icon svg {
+  stroke-width: 2;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 0.01em;
+}
+
+h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#location-label {
+  margin: 0;
+  font-size: 12px;
+}
+
+#location-label:empty {
+  display: none;
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#search {
+  flex: 1;
+  min-width: 0;
+}
+
+#search gmp-place-autocomplete {
+  width: 100%;
+  color-scheme: dark;
+}
+
+.btn,
+.icon-btn,
+select,
+input[type='date'] {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 36px;
+}
+
+.btn {
+  padding: 0 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  padding: 0;
+  background: var(--panel);
+}
+
+.icon-btn svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0;
+}
+
+#map-toggle svg,
+.chevron svg,
+.line-icon svg {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The locate button's centre dot: filled in only while the place shown was
+   set from the visitor's own location. */
+.locate-dot {
+  display: none;
+  fill: currentColor;
+  stroke: none;
+}
+
+#locate-btn.located .locate-dot {
+  display: block;
+}
+
+.btn:hover,
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+#play .i-pause,
+#play[aria-pressed='true'] .i-play {
+  display: none;
+}
+
+#play[aria-pressed='true'] .i-pause {
+  display: block;
+}
+
+.time-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.date-field {
+  flex: 1;
+  display: flex;
+}
+
+input[type='date'] {
+  flex: 1;
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.time-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The time stays on one line whatever the sky label beside it says, so the
+   content below doesn't shift as the night is scrubbed; the label gives way. */
+#time-label {
+  font-weight: 600;
+  white-space: nowrap;
+  flex: none;
+}
+
+.time-readout .pill {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- info dialog ---------- */
+
+#info-dialog {
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 16px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-solid);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+#info-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dialog-head h2 {
+  font-size: 18px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.dialog-section {
+  margin-top: 16px;
+}
+
+.dialog-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.dialog-section p {
+  margin: 0 0 8px;
+}
+
+.shortcuts dl {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.shortcuts dl > div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+}
+
+.shortcuts dd {
+  margin: 0;
+}
+
+kbd {
+  font: inherit;
+  font-size: 12px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Keyboard shortcuts are desktop only. */
+@media (hover: none), (max-width: 799px) {
+  .shortcuts {
+    display: none;
+  }
+}
+
+.pill {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pill:empty {
+  display: none;
+}
+
+/* Slider whose track shows sky darkness through the night. */
+#slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 28px;
+  background: transparent;
+  margin: 0;
+  cursor: pointer;
+  --track: linear-gradient(to right, #333, #333);
+}
+
+#slider::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track);
+  border: 1px solid var(--line);
+}
+
+#slider::-moz-range-track {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track);
+  border: 1px solid var(--line);
+}
+
+#slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px;
+  height: 22px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--panel-solid);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+#slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--panel-solid);
+}
+
+.twilight {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.twilight select {
+  min-height: 30px;
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.dialog-section .twilight-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chip[aria-pressed='true'] {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--c) 60%, transparent);
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c);
+  flex: none;
+}
+
+.chip[aria-pressed='false'] .dot {
+  background: transparent;
+  border: 1.5px solid var(--c);
+}
+
+/* The night as a timeline: one row per object, on the slider's time axis. */
+.info {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tl-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  column-gap: 8px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.tl-scale {
+  position: relative;
+  height: 16px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.tl-scale span {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.tl-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  font-weight: 600;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Up right now. */
+.tl-name.up {
+  color: var(--text);
+}
+
+.tl-name:hover {
+  text-decoration: underline;
+}
+
+.tl-track {
+  position: relative;
+  height: 30px;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.tl-track > * {
+  position: absolute;
+}
+
+/* How dark the sky is, as on the slider. */
+.tl-sky {
+  left: 0;
+  right: 0;
+  top: 3px;
+  height: 24px;
+  border-radius: 3px;
+  opacity: 0.4;
+}
+
+.tl-track:hover .tl-sky,
+.tl-track[aria-expanded='true'] .tl-sky {
+  opacity: 0.6;
+}
+
+/* The object's altitude through the night, horizon at the bottom, 90° at the top. */
+.tl-plot {
+  left: 0;
+  top: 3px;
+  width: 100%;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 3px;
+  /* The fill's gradient takes its colour from here. */
+  color: var(--c);
+}
+
+/* The Sun's own plot: solid whenever it's up. */
+.tl-obs {
+  fill: var(--c);
+  opacity: 0.85;
+}
+
+.tl-line {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Hour marks: a light and a dark hairline side by side, so one of them shows
+   on the dark sky and the other on a bright bar. */
+.tl-tick {
+  top: 3px;
+  height: 24px;
+  margin-left: -1px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-right: 1px solid rgba(0, 0, 0, 0.16);
+}
+
+.tl-tick.major {
+  border-left-color: rgba(255, 255, 255, 0.26);
+  border-right-color: rgba(0, 0, 0, 0.34);
+}
+
+/* The chosen time. */
+.tl-now {
+  left: var(--now, 0%);
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.tl-detail {
+  grid-column: 1 / -1;
+  margin: 0 0 8px 4px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--c);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mag {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-now {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.info-now.up {
+  color: var(--text);
+}
+
+.info-times {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-times dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ev-icon {
+  width: 10px;
+  height: 10px;
+  margin-right: 3px;
+  vertical-align: -1px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.info-times dd {
+  margin: 0;
+}
+
+.obs {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.obs.good {
+  color: var(--good);
+}
+
+
+/* ---------- markers ---------- */
+
+.marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.marker[hidden] {
+  display: none;
+}
+
+/* Generous invisible hit area for touch. */
+.marker::before {
+  content: '';
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  left: -20px;
+  top: -20px;
+  border-radius: 50%;
+}
+
+.marker-dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.65),
+    0 0 12px 2px color-mix(in srgb, var(--c) 70%, transparent);
+}
+
+.marker-label {
+  position: absolute;
+  left: 14px;
+  top: 0;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow:
+    0 0 3px #000,
+    0 0 3px #000,
+    0 1px 2px #000;
+}
+
+.marker.label-left .marker-label {
+  left: auto;
+  right: 14px;
+}
+
+.marker.below {
+  opacity: 0.55;
+}
+
+.marker.offscreen .marker-dot {
+  border-radius: 0;
+  width: 18px !important;
+  height: 14px !important;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  transform: translate(-50%, -50%) rotate(var(--angle, 0rad));
+  box-shadow: none;
+  filter: drop-shadow(0 0 2px #000);
+}
+
+.marker.offscreen .marker-label {
+  left: 0;
+  top: 16px;
+  transform: translateX(-50%);
+  font-size: 12px;
+}
+
+.marker:focus-visible .marker-dot {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* Street View animates programmatic turns but reports the target POV at
+   once, so hide the overlay until the imagery catches up. */
+#overlay.turning {
+  opacity: 0;
+}
+
+/* ---------- desktop: panel on the left, collapsible ---------- */
+
+#panel-toggle {
+  display: none;
+}
+
+@media (min-width: 800px) {
+  #app {
+    grid-template-columns: var(--panel-w) 1fr;
+  }
+
+  #panel {
+    grid-column: 1;
+    grid-row: 1;
+    border-left: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  #view {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  /* The map card is placed against the whole window, so step it past the panel. */
+  #map-wrap {
+    left: calc(var(--panel-w) + 16px);
+  }
+
+  body.landing #map-wrap {
+    left: var(--panel-w);
+  }
+
+  /* Collapsed: the panel gives its width to the view. (Not while choosing a
+     first spot: the search box is in the panel.) */
+  body.panel-collapsed:not(.landing) {
+    --panel-w: 0px;
+  }
+
+  body.panel-collapsed:not(.landing) #panel {
+    display: none;
+  }
+
+  /* A tab on the panel's edge; it stays at the window's edge when collapsed. */
+  #panel-toggle {
+    display: inline-grid;
+    position: absolute;
+    z-index: 5;
+    left: var(--panel-w);
+    top: 14px;
+    width: 22px;
+    height: 40px;
+    min-height: 0;
+    border-left: 0;
+    border-radius: 0 8px 8px 0;
+    background: var(--panel-solid);
+  }
+
+  #panel-toggle:hover {
+    background: #2a3140;
+  }
+
+  #panel-toggle svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  body.panel-collapsed #panel-toggle svg {
+    transform: rotate(180deg);
+  }
+
+  body.landing #panel-toggle {
+    display: none;
+  }
+}
+
+/* ---------- toast ---------- */
+
+#toast {
+  position: fixed;
+  z-index: 10;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
+  max-width: calc(100% - 32px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #222a38;
+  border: 1px solid var(--line);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+
+#toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- mobile: bottom sheet ---------- */
+
+@media (max-width: 799px) {
+  #app {
+    grid-template-columns: 1fr;
+  }
+
+  /* Street View stops at the collapsed sheet, so its centre and controls
+     stay visible. The expanded sheet overlaps it. */
+  #view {
+    margin-bottom: var(--sheet-h, 150px);
+  }
+
+  body.landing #map-wrap {
+    width: 100%;
+  }
+
+  #map-wrap {
+    left: 12px;
+    top: 12px;
+    bottom: auto;
+    width: 132px;
+    height: 132px;
+  }
+
+  /* A little wider so "Aug 2011" fits between the arrows. */
+  body.has-imagery:not(.map-hidden):not(.landing) #map-wrap {
+    width: 156px;
+    height: 169px;
+  }
+
+  /* On phones the card sits at the top, so the collapse chevron points up. */
+  #map-toggle .i-chevron {
+    transform: none;
+  }
+
+  #cap-select {
+    font-size: 12px;
+  }
+
+  #panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 78vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 16px 16px 0 0;
+    padding: 4px 16px calc(12px + env(safe-area-inset-bottom));
+    gap: 14px;
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  }
+
+  #sheet-handle {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 22px;
+    flex: none;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  #sheet-handle span {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.3);
+  }
+
+  /* Collapsed: just the time controls (or the search while landing). */
+  #panel:not(.open) > :not(.sheet-handle, .time) {
+    display: none;
+  }
+
+  body.landing #panel:not(.open) > .section:first-of-type {
+    display: flex;
+  }
+
+  body.landing #panel:not(.open) > .time {
+    display: none;
+  }
+
+  .hint {
+    top: auto;
+    bottom: 120px;
+  }
+
+  #toast {
+    bottom: auto;
+    top: 16px;
+  }
+}
