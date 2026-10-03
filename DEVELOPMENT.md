@@ -95,7 +95,13 @@ The build uses relative asset paths, so it works under `/REPO/` or at a domain r
   exact horizon crossing or sunset/sunrise point (`boldBoundary`), not at the
   nearest sample.
 - All state lives in the URL (`state.ts`): place, panorama ID, heading, pitch,
-  zoom, time, objects and twilight level.
+  zoom, time, twilight level, and the visitor's own choices of objects (`b`:
+  a name is switched on, `-name` off; everything else follows what's visible
+  that night). `eye=0` is added when "Naked-eye objects only" is off.
+- The slider and the chart share a time axis on which daytime is squeezed
+  (`axis.ts`). The chart's rows are rebuilt only when the night, the objects
+  shown or the open rows change; scrubbing and playback just move the time
+  line and refresh the open rows' "now" text.
 
 Stack: Vite and TypeScript with no UI framework; `@googlemaps/js-api-loader`,
 `astronomy-engine` and `tz-lookup`.
@@ -208,7 +214,7 @@ accurate in 2011 captures as in recent ones.
 | `src/astro.ts` | astronomy-engine wrappers: positions, paths, rise/set/transit, observable windows |
 | `src/projection.ts` | Street View camera model, alt/az → screen projection, label anchoring |
 | `src/overlay.ts` | Canvas paths, labels, horizon and compass; DOM markers and edge arrows |
-| `src/panel.ts` | Object chips, info cards, slider sky gradient |
+| `src/panel.ts` | The chart of the night (one altitude plot per object, with its toggle and details), and the slider's sky shading, hour marks and sunset/sunrise labels |
 | `src/imagery.ts` | Street View capture dates: parsing the undocumented `time` list, labels |
 | `src/time.ts` | Time-zone conversion and the noon-to-noon night window |
 | `src/axis.ts` | The slider's and timeline's shared time axis, with daytime squeezed |

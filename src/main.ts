@@ -5,10 +5,10 @@ import { BODIES, computeNight, interpolate, observableTonight, type BodyId, type
 import { axisFor, nightAxis, type TimeAxis } from './axis';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
-import { renderChips, renderInfo, setTimelineNow, skyState, sliderGradient } from './panel';
+import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
 import { lookAt, streetViewHfov, type Camera } from './projection';
-import { flushState, readState, writeState, type Twilight } from './state';
-import { formatDate, formatTime, isoDate, nightWindow, shiftDays, tzAbbrev, wallTime, zonedToDate } from './time';
+import { flushState, readState, shownBodies, writeState, type Twilight } from './state';
+import { formatReadoutDate, formatTime, isoDate, nightWindow, shiftDays, tzAbbrev, wallTime, zonedToDate } from './time';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -33,10 +33,14 @@ const els = {
   now: $<HTMLButtonElement>('now'),
   play: $<HTMLButtonElement>('play'),
   slider: $<HTMLInputElement>('slider'),
-  timeLabel: $<HTMLOutputElement>('time-label'),
+  sliderTrack: $<HTMLDivElement>('slider-track'),
+  sliderScale: $<HTMLDivElement>('slider-scale'),
+  sunTimes: $<HTMLDivElement>('sun-times'),
+  timeLabel: $<HTMLSpanElement>('time-label'),
+  timeButton: $<HTMLButtonElement>('time-button'),
   skyState: $<HTMLSpanElement>('sky-state'),
   twilight: $<HTMLSelectElement>('twilight'),
-  chips: $<HTMLDivElement>('chips'),
+  nakedEye: $<HTMLInputElement>('naked-eye'),
   info: $<HTMLUListElement>('info'),
   share: $<HTMLButtonElement>('share-btn'),
   infoBtn: $<HTMLButtonElement>('info-btn'),
@@ -48,6 +52,11 @@ const els = {
 const state = readState();
 let tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 let night: NightData | null = null;
+/** The objects visible on that night (the chart's upper group), and those of them shown unless the visitor says otherwise. */
+let visibleTonight: BodyId[] = [];
+let onByDefault: BodyId[] = [];
+/** The night the slider's track and its sunset and sunrise labels were last drawn for. */
+let nightDrawn: NightData | null = null;
 let nightKey = '';
 let pano: google.maps.StreetViewPanorama | null = null;
 /** Steps to an older (-1) or newer (+1) capture; set once Street View is up. */
@@ -70,6 +79,7 @@ function toast(msg: string, ms = 4000): void {
 function recompute(): void {
   if (state.lat === null || state.lng === null) {
     night = null;
+    nightKey = '';
   } else {
     const win = nightWindow(state.time, tz);
     // ~100 m grid: walking between panoramas doesn't change anything visible.
@@ -77,17 +87,56 @@ function recompute(): void {
     if (key !== nightKey) {
       night = computeNight(state.lat, state.lng, win, BODIES.map((b) => b.id), state.twilight);
       nightKey = key;
-      // Until the visitor chooses for themselves, show what's observable tonight.
-      if (state.bodiesAuto) {
-        state.bodies = observableTonight(night);
-        showChips();
-      }
     }
   }
+  // What the slider shows of the night itself changes only with the night:
+  // its sky shading and hour marks, and the sunset and sunrise above it.
+  if (night !== nightDrawn) {
+    nightDrawn = night;
+    renderSunTimes(els.sunTimes, night, tz, jumpTo);
+    renderHourLabels(els.sliderScale, night, tz);
+    els.sliderTrack.style.background = night
+      ? [midnightMark(night, tz), sliderTicks(night), sliderGradient(night)].filter(Boolean).join(', ')
+      : '';
+  }
+  // Show what's visible on this night, except where the visitor chose otherwise.
+  // Uranus and Neptune count as visible too, and are listed with the rest,
+  // but are only switched on by default if the naked-eye setting is off.
+  // The Sun heads that group too, like the Moon whatever the night: it's the
+  // reference the rest are read against, though it's off unless switched on.
+  visibleTonight = night ? ['Sun', ...observableTonight(night, false)] : [];
+  onByDefault = night ? observableTonight(night, state.nakedEyeOnly) : [];
+  state.bodies = shownBodies(onByDefault, state.overrides);
   syncTimeControls();
   renderInfoPanel();
+  follow();
   requestRender();
 }
+
+/** The object the view is locked onto, while its plot is being dragged. */
+let following: BodyId | null = null;
+
+/**
+ * Turns the view to keep the followed object in it as the time changes. It
+ * always faces the object's direction. It tilts up with the object only so
+ * far as keeps the horizon in view, near the bottom: beyond that the tilt
+ * holds and the object climbs up the view instead, until it nears the top,
+ * when the tilt has to follow again. Below the horizon the view stays level,
+ * already looking at where the object will come up.
+ */
+function follow(): void {
+  const pos = following && night && interpolate(night.bodies.get(following)?.samples ?? [], state.time.getTime());
+  const cam = camera();
+  if (!pano || !pos || !cam) return;
+  const vfov = (2 * Math.atan(Math.tan((cam.hfov * Math.PI) / 360) * (cam.height / cam.width)) * 180) / Math.PI;
+  const horizonInView = vfov * (0.5 - FOLLOW_HORIZON_MARGIN);
+  const objectInView = pos.alt - vfov * (0.5 - FOLLOW_TOP_MARGIN);
+  const pitch = Math.max(Math.min(pos.alt, horizonInView), objectInView, 0);
+  pano.setPov({ heading: pos.az, pitch: Math.min(89, pitch) });
+}
+/** While following: how far above the view's bottom edge the horizon is kept, and how far below its top the object, as fractions of the view's height. */
+const FOLLOW_HORIZON_MARGIN = 0.15;
+const FOLLOW_TOP_MARGIN = 0.12;
 
 /** The noon-to-noon window holding the current time. */
 function currentWindow(): { start: Date; end: Date } {
@@ -110,25 +159,105 @@ function sliderAxis(): TimeAxis {
 }
 
 function syncTimeControls(): void {
-  const win = currentWindow();
+  // The field shows the calendar date of the chosen time (matching the
+  // readout), so it moves on at midnight, part-way along the slider.
   // Writing the value while someone types in the field resets the browser's
   // typing state, so a year could only be changed one digit at a time.
-  if (document.activeElement !== els.date) els.date.value = isoDate(win.start, tz);
-  els.slider.value = String(Math.round(sliderAxis().toFraction(state.time.getTime()) * SLIDER_MAX));
-  const label = `${formatDate(state.time, tz)}, ${formatTime(state.time, tz)} ${tzAbbrev(state.time, tz)}`;
+  if (document.activeElement !== els.date) els.date.value = isoDate(state.time, tz);
+  const along = sliderAxis().toFraction(state.time.getTime());
+  els.slider.value = String(Math.round(along * SLIDER_MAX));
+  const date = formatReadoutDate(state.time, tz);
+  const zone = tzAbbrev(state.time, tz);
+  const label = `${date}, ${formatTime(state.time, tz)} ${zone}`;
   els.timeLabel.textContent = label;
+  // The readout's width changes with its date and zone, not its clock digits
+  // (they're even-width), so it only needs refitting when those change.
+  if (`${date}|${zone}` !== fittedFor) {
+    fittedFor = `${date}|${zone}`;
+    fitTimeLabel();
+  }
   els.slider.setAttribute('aria-valuetext', label);
-  if (night) {
-    els.slider.style.setProperty('--track', sliderGradient(night));
-    els.skyState.textContent = skyState(night, state.time.getTime());
-    setTimelineNow(els.info, night, state.time.getTime());
-  } else {
-    els.skyState.textContent = '';
+  els.skyState.textContent = night ? skyState(night, state.time.getTime()) : '';
+  // The thumb is filled with the sky's colour at the chosen time.
+  els.slider.style.setProperty('--sky', night ? skyColorAt(night, state.time.getTime()) : '');
+  if (night) setTimelineNow(els.info, night, state.time.getTime());
+  // The tip above the thumb: centred on it, but kept inside the panel's
+  // right-hand edge near the end. It only shows while the slider is being
+  // moved, so only then is it worth measuring (this runs every frame of playback).
+  if (sliderHeld || document.activeElement === els.slider) {
+    const room = sliderWrap.clientWidth + TIP_OVERHANG - els.skyState.offsetWidth / 2;
+    els.skyState.style.left = `${Math.min(along * sliderWrap.clientWidth, room).toFixed(1)}px`;
   }
 }
+/** The date and zone the readout was last fitted for. */
+let fittedFor = '';
+/**
+ * Keeps the readout on one line at the largest size that fits. The
+ * stylesheet sizes it for a typical readout; one that comes out wider than
+ * its space (a longer month or zone name, or the form with the year) is
+ * scaled down to fit, rather than cut off.
+ */
+function fitTimeLabel(): void {
+  const label = els.timeLabel;
+  label.style.fontSize = '';
+  // (Widths are reported in whole pixels, so one pass can land a pixel over.)
+  for (let pass = 0; pass < 3 && label.scrollWidth > label.clientWidth; pass++) {
+    const size = parseFloat(getComputedStyle(label).fontSize);
+    label.style.fontSize = `${size * (label.clientWidth / label.scrollWidth) * 0.99}px`;
+  }
+}
+// Its space changes with the panel's width (a phone turned, the window resized).
+new ResizeObserver(fitTimeLabel).observe(els.timeButton.parentElement!);
+
+const sliderWrap = els.slider.parentElement!;
+/** True from a press on the slider until the pointer is let go. */
+let sliderHeld = false;
+/** How far the tip may reach past the slider's right-hand end (into the panel's padding). */
+const TIP_OVERHANG = 12;
 
 function renderInfoPanel(): void {
-  renderInfo(els.info, night, state.bodies, state.time.getTime(), tz, lookAtBody);
+  renderInfo(els.info, night, { shown: state.bodies, visible: visibleTonight }, state.time.getTime(), tz, {
+    onToggle: toggleBody,
+    onLook: lookAtBody,
+    onDetails: renderInfoPanel,
+    // Dragging along an object's own plot keeps the view on that object.
+    onScrub: (fraction, id) => {
+      pauseForScrub();
+      following = id;
+      dragTo(fraction);
+    },
+    onScrubEnd: () => {
+      following = null;
+      stopEdgeRun();
+    },
+    onJump: jumpTo,
+  });
+}
+
+// The chart lays its labels out by its width, so it's redrawn when that
+// changes: the window resized, a phone turned, the panel reopened. (A change
+// of height alone, such as a row opening, leaves it as it is.)
+new ResizeObserver(renderInfoPanel).observe(els.info);
+
+/**
+ * Switches an object on or off. A choice that differs from what the night
+ * would show anyway is kept as the visitor's own (and goes in the link);
+ * switching back to what the night shows hands the object back to it.
+ */
+function toggleBody(id: BodyId): void {
+  const on = !state.bodies.includes(id);
+  if (on === onByDefault.includes(id)) delete state.overrides[id];
+  else state.overrides[id] = on;
+  state.bodies = shownBodies(onByDefault, state.overrides);
+  renderInfoPanel();
+  requestRender();
+  writeState(state);
+}
+
+/** Goes straight to a moment: a sunset, a rise, a transit (pressed on the slider or the chart). */
+function jumpTo(t: Date): void {
+  pauseForScrub();
+  setTime(t);
 }
 
 function setTime(t: Date): void {
@@ -496,15 +625,20 @@ async function initMaps(key: string | undefined): Promise<void> {
     void goToLatLng(e.latLng.toJSON(), 60);
   });
 
+  els.locate.addEventListener('click', () => locate(true));
+  // The same, offered in the landing hint for anyone who dismissed the first prompt.
+  document.getElementById('hint-locate')?.addEventListener('click', () => locate(true));
+
   // Initial location from the URL
   if (hasLoc) {
     // Loading a panorama fires POV/zoom events that overwrite state, so keep
     // the linked view to re-apply afterwards.
     const { heading, pitch, zoom } = state;
     const ok = (state.pano && (await goTo({ pano: state.pano }))) || (await goToLatLng({ lat: state.lat!, lng: state.lng! }, 100));
-    if (!ok) return;
-    pano.setPov({ heading, pitch });
-    pano.setZoom(zoom);
+    if (ok) {
+      pano.setPov({ heading, pitch });
+      pano.setZoom(zoom);
+    }
   } else {
     // No location in the link: start where the visitor is, like Stellarium Web.
     locate(false);
@@ -541,26 +675,16 @@ async function initMaps(key: string | undefined): Promise<void> {
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 },
     );
   }
-  els.locate.addEventListener('click', () => locate(true));
-  // The same, offered in the landing hint for anyone who dismissed the first prompt.
-  document.getElementById('hint-locate')?.addEventListener('click', () => locate(true));
 }
 
 // ---------- controls ----------
 
-function showChips(): void {
-  renderChips(els.chips, state.bodies, (id, on) => {
-    // A manual choice is kept from here on, and goes into the link.
-    state.bodiesAuto = false;
-    state.bodies = on
-      ? BODIES.map((b) => b.id).filter((b) => b === id || state.bodies.includes(b))
-      : state.bodies.filter((b) => b !== id);
-    renderInfoPanel();
-    requestRender();
-    writeState(state);
-  });
-}
-showChips();
+els.nakedEye.checked = state.nakedEyeOnly;
+els.nakedEye.addEventListener('change', () => {
+  state.nakedEyeOnly = els.nakedEye.checked;
+  recompute();
+  writeState(state);
+});
 
 els.twilight.value = String(state.twilight);
 els.twilight.addEventListener('change', () => {
@@ -588,7 +712,6 @@ const EDGE_SPEED = 6 * 3600;
 /** How long the slider must sit at an end before time starts running. */
 const EDGE_DWELL_MS = 350;
 const edge = { dir: 0 as -1 | 0 | 1, timer: 0, frame: 0, last: 0, lastInfo: 0 };
-let sliderHeld = false;
 
 function edgeTick(now: number): void {
   const t = state.time.getTime() + edge.dir * (now - edge.last) * EDGE_SPEED;
@@ -604,6 +727,7 @@ function edgeTick(now: number): void {
       renderInfoPanel();
       edge.lastInfo = now;
     }
+    follow();
     requestRender();
   }
   edge.frame = requestAnimationFrame(edgeTick);
@@ -621,48 +745,78 @@ function stopEdgeRun(): void {
   }
 }
 
+/** Marks the slider as held, which also shows the tip above its thumb. */
+function setSliderHeld(held: boolean): void {
+  sliderHeld = held;
+  sliderWrap.classList.toggle('held', held);
+  if (held) syncTimeControls(); // puts the tip over the thumb
+}
+// The tip shows for keyboard focus too.
+els.slider.addEventListener('focus', syncTimeControls);
 els.slider.addEventListener('pointerdown', () => {
-  sliderHeld = true;
+  setSliderHeld(true);
   pauseForScrub();
 });
 for (const type of ['pointerup', 'pointercancel']) {
   window.addEventListener(type, () => {
-    sliderHeld = false;
+    setSliderHeld(false);
     stopEdgeRun();
   }, true);
 }
 
 els.slider.addEventListener('input', () => {
   pauseForScrub();
-  const win = currentWindow();
-  const value = Number(els.slider.value);
-  const dir = value >= Number(els.slider.max) ? 1 : value <= 0 ? -1 : 0;
-
-  if (sliderHeld && dir !== 0) {
-    // Still against the same end: the pointer reports the end again each time
-    // it moves, while the thumb belongs wherever the running time has got to.
-    if (edge.dir === dir) {
-      syncTimeControls();
-      return;
-    }
-    // Just arrived: the last time of this night, then run on after a moment.
+  const fraction = Number(els.slider.value) / SLIDER_MAX;
+  if (sliderHeld) {
+    dragTo(fraction);
+  } else {
+    // From the keyboard (Home, End): just go there.
     stopEdgeRun();
-    setTime(new Date(dir > 0 ? win.end.getTime() - SLIDER_STEP_MS : win.start.getTime()));
-    edge.dir = dir;
-    edge.timer = window.setTimeout(() => {
-      edge.last = edge.lastInfo = performance.now();
-      edge.frame = requestAnimationFrame(edgeTick);
-    }, EDGE_DWELL_MS);
+    scrubTo(fraction);
+  }
+});
+
+/**
+ * Follows a drag to a position along the axis: the slider's thumb, or a
+ * pointer on an open plot (which can be past either end, below 0 or above 1).
+ * Inside the axis that's simply the time there. At or past an end, the time
+ * goes to that end of the night and, held there, starts running on.
+ */
+function dragTo(fraction: number): void {
+  const dir = fraction >= 1 ? 1 : fraction <= 0 ? -1 : 0;
+  if (dir === 0) {
+    stopEdgeRun();
+    scrubTo(fraction);
     return;
   }
-
+  // Still against the same end: the pointer reports the end again each time
+  // it moves, while the thumb belongs wherever the running time has got to.
+  if (edge.dir === dir) {
+    syncTimeControls();
+    return;
+  }
+  // Just arrived: the last time of this night, then run on after a moment.
   stopEdgeRun();
-  // The position along the axis, as a time on the 5-minute grid.
+  const win = currentWindow();
+  setTime(new Date(dir > 0 ? win.end.getTime() - SLIDER_STEP_MS : win.start.getTime()));
+  edge.dir = dir;
+  edge.timer = window.setTimeout(() => {
+    edge.last = edge.lastInfo = performance.now();
+    edge.frame = requestAnimationFrame(edgeTick);
+  }, EDGE_DWELL_MS);
+}
+
+/**
+ * Sets the time to a position (0–1) along the slider's axis, on the
+ * 5-minute grid: for the slider, and for dragging along an open plot.
+ */
+function scrubTo(fraction: number): void {
+  const win = currentWindow();
   const start = win.start.getTime();
-  const t = sliderAxis().toTime(value / SLIDER_MAX);
+  const t = sliderAxis().toTime(fraction);
   const last = win.end.getTime() - SLIDER_STEP_MS; // the window's end is the next night's start
   setTime(new Date(Math.min(start + Math.round((t - start) / SLIDER_STEP_MS) * SLIDER_STEP_MS, last)));
-});
+}
 // The slider's positions aren't even steps of time, so arrow keys on it step
 // the time itself: five minutes, or an hour with Page Up/Down. A step past
 // the end is the start of the next night, and the slider jumps back to the left.
@@ -692,20 +846,113 @@ els.date.addEventListener('change', () => {
   const [year, month, day] = els.date.value.split('-').map(Number);
   // Typing a year fires a change per digit (0002, 0020, 0202, 2027): wait for all four.
   if (year < 1000) return;
-  // Same offset into the night, on the chosen evening.
-  const offset = state.time.getTime() - currentWindow().start.getTime();
-  const start = zonedToDate({ year, month, day, hour: 12, minute: 0 }, tz);
-  setTime(new Date(start.getTime() + offset));
+  // The same clock time, on the chosen date.
+  const { hour, minute } = wallTime(state.time, tz);
+  setTime(zonedToDate({ year, month, day, hour, minute }, tz));
 });
 
 // Show the applied date again once typing is done (it may have been left partial).
 els.date.addEventListener('blur', syncTimeControls);
 
-els.now.addEventListener('click', () => setTime(new Date()));
+// The date and time readout doubles as the date picker. A press opens the
+// calendar of the date field hidden beneath it; a double-click swaps the
+// readout for the field itself, to type a date into.
+const timeReadout = els.timeButton.parentElement!;
+function editDate(editing: boolean): void {
+  timeReadout.classList.toggle('editing', editing);
+  if (editing) els.date.focus();
+}
+/**
+ * Whether the calendar is (as far as can be told) showing. The browser
+ * closes it on any press outside it, including one on the readout, and
+ * doesn't say so: so a press on the readout while this is set means "close",
+ * and mustn't open it again.
+ */
+let calendarOpen = false;
+let calendarOpenedAt = 0;
+function openCalendar(): void {
+  try {
+    els.date.showPicker();
+    calendarOpen = true;
+    calendarOpenedAt = performance.now();
+  } catch {
+    // No showPicker (older browsers): typing is the next best thing.
+    editDate(true);
+  }
+}
+// A press opens the calendar at once, with no wait to see whether a second
+// press is coming. A press while it's open closes it (the browser does that
+// for any press outside the calendar). If that second press comes straight
+// after the first, it's a double-click: the field then takes over, a moment
+// later, once the calendar has gone.
+const DOUBLE_CLICK_MS = 200;
+const CALENDAR_CLOSE_MS = 60;
+els.timeButton.addEventListener('click', () => {
+  if (!calendarOpen) {
+    openCalendar();
+    return;
+  }
+  calendarOpen = false;
+  if (performance.now() - calendarOpenedAt < DOUBLE_CLICK_MS) {
+    window.setTimeout(() => editDate(true), CALENDAR_CLOSE_MS);
+  }
+});
+// The other ways the calendar closes: a date is picked, something else is
+// pressed, or Escape.
+els.date.addEventListener('change', () => (calendarOpen = false));
+window.addEventListener('pointerdown', (e) => {
+  if (!els.timeButton.contains(e.target as Node)) calendarOpen = false;
+}, true);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') calendarOpen = false;
+}, true);
+// Typing ends when the field is left, or on Enter or Escape.
+els.date.addEventListener('blur', () => editDate(false));
+els.date.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === 'Escape') els.date.blur();
+});
+
+els.now.addEventListener('click', () => jumpTo(new Date()));
 
 const shiftDay = (days: number) => setTime(shiftDays(state.time, days, tz));
-els.prevDay.addEventListener('click', () => shiftDay(-1));
-els.nextDay.addEventListener('click', () => shiftDay(1));
+
+/**
+ * Runs `action` on a press, then again and again while the button is held:
+ * after a pause, slowly at first, then faster.
+ */
+function repeatWhileHeld(button: HTMLButtonElement, action: () => void): void {
+  let timer = 0;
+  const stop = () => window.clearTimeout(timer);
+  button.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    stop();
+    action();
+    let delay = HOLD_REPEAT_START_MS;
+    const again = () => {
+      action();
+      delay = Math.max(HOLD_REPEAT_MIN_MS, delay * HOLD_REPEAT_SPEEDUP);
+      timer = window.setTimeout(again, delay);
+    };
+    timer = window.setTimeout(again, HOLD_PAUSE_MS);
+  });
+  for (const type of ['pointerup', 'pointerleave', 'pointercancel', 'blur']) button.addEventListener(type, stop);
+  // The press itself was handled above; this is for the keyboard (Enter or
+  // Space), whose clicks carry no press count.
+  button.addEventListener('click', (e) => {
+    if (e.detail === 0) action();
+  });
+  // A long press on a touch screen would otherwise open the context menu.
+  button.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+/** How long a button is held before it starts repeating. */
+const HOLD_PAUSE_MS = 400;
+/** The gap between repeats: where it starts, what it's multiplied by each time, and where it stops shrinking. */
+const HOLD_REPEAT_START_MS = 220;
+const HOLD_REPEAT_SPEEDUP = 0.9;
+const HOLD_REPEAT_MIN_MS = 45;
+
+repeatWhileHeld(els.prevDay, () => shiftDay(-1));
+repeatWhileHeld(els.nextDay, () => shiftDay(1));
 
 /** Elements where arrow keys already mean something (text, date, slider, select, search). */
 function handlesArrows(el: EventTarget | null): boolean {
@@ -863,6 +1110,7 @@ for (const type of ['pointerup', 'pointercancel']) {
 
 /** Called on every POV change; collapses the map after enough dragging. */
 function noteViewTurned(): void {
+  if (document.body.classList.contains('map-hidden')) return; // already tucked away
   const s = lookingAround;
   const now = performance.now();
   // Part of a drag: the pointer is down, or the view is still gliding after

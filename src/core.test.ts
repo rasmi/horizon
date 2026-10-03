@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { boldBoundary, computeNight, horizontal, interpolate, observableTonight, observer } from './astro';
+import { boldBoundary, computeNight, horizontal, interpolate, observableTonight, observer, type BodyId } from './astro';
 import { edgeIndicator, focalLength, lineLabelAnchor, lookAt, project, streetViewHfov, type Camera } from './projection';
-import { readState, stateToSearch } from './state';
+import { readState, shownBodies, stateToSearch } from './state';
 import { nightWindow, shiftDays, tzOffsetMinutes, wallTime, zonedToDate } from './time';
 
 const cam: Camera = { heading: 90, pitch: 0, hfov: 90, width: 800, height: 600 };
@@ -255,22 +255,38 @@ describe('url state', () => {
       pitch: 5,
       zoom: 1,
       time: new Date('2026-07-04T21:30:12Z'),
-      bodies: ['Moon', 'Jupiter'],
-      bodiesAuto: false,
+      bodies: ['Moon', 'Uranus'],
+      overrides: { Uranus: true, Mars: false },
       twilight: 12,
+      nakedEyeOnly: true,
     });
-    expect(s).toBe('?lat=40.700000&lng=-74.000000&pano=abc&h=12.3&p=5.0&z=1.00&t=2026-07-04T21:30Z&b=Moon,Jupiter&tw=12');
+    expect(s).toBe('?lat=40.700000&lng=-74.000000&pano=abc&h=12.3&p=5.0&z=1.00&t=2026-07-04T21:30Z&b=-Mars,Uranus&tw=12');
   });
 
-  it('keeps the object list out of the link while it is automatic', () => {
+  it('keeps only the visitor’s own choices in the link', () => {
     const auto = readState('?lat=40.7&lng=-74');
-    expect(auto.bodiesAuto).toBe(true);
+    expect(auto.overrides).toEqual({});
     expect(stateToSearch(auto)).not.toContain('b=');
-    // An explicit list, even an empty one, is a choice and is preserved.
-    const chosen = readState('?lat=40.7&lng=-74&b=Mars');
-    expect(chosen).toMatchObject({ bodiesAuto: false, bodies: ['Mars'] });
-    expect(stateToSearch(chosen)).toContain('b=Mars');
-    expect(readState('?b=')).toMatchObject({ bodiesAuto: false, bodies: [] });
+    // A name is switched on, "-name" off; anything else is ignored.
+    const chosen = readState('?lat=40.7&lng=-74&b=Uranus,-Mars,Pluto');
+    expect(chosen.overrides).toEqual({ Uranus: true, Mars: false });
+    expect(stateToSearch(chosen)).toContain('b=-Mars,Uranus');
+    expect(readState('?b=').overrides).toEqual({});
+  });
+
+  it('keeps the naked-eye setting in the link only when it is switched off', () => {
+    expect(readState('?lat=40.7&lng=-74').nakedEyeOnly).toBe(true);
+    const all = readState('?lat=40.7&lng=-74&eye=0');
+    expect(all.nakedEyeOnly).toBe(false);
+    expect(stateToSearch(all)).toContain('eye=0');
+    expect(stateToSearch(readState('?lat=40.7&lng=-74'))).not.toContain('eye=');
+  });
+
+  it('shows what is visible, adjusted by those choices', () => {
+    const visible: BodyId[] = ['Moon', 'Mars', 'Saturn'];
+    expect(shownBodies(visible, {})).toEqual(['Moon', 'Mars', 'Saturn']);
+    // In the usual order, whatever order the choices were made in.
+    expect(shownBodies(visible, { Uranus: true, Sun: true, Mars: false })).toEqual(['Sun', 'Moon', 'Saturn', 'Uranus']);
   });
 });
 

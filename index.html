@@ -68,44 +68,53 @@
 
         <section class="section time" aria-labelledby="time-h">
           <h2 id="time-h" class="visually-hidden">Time</h2>
+          <!-- The date and time, between the day arrows. It's also the date
+               picker: pressing it opens the calendar of the date field
+               tucked away beneath it. -->
           <div class="time-row">
             <button id="prev-day" type="button" class="icon-btn chevron" aria-label="Previous day" title="Previous day (←)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
             </button>
-            <label class="date-field">
-              <span class="visually-hidden">Night of</span>
-              <input id="date" type="date" />
-            </label>
+            <div class="time-readout">
+              <button id="time-button" type="button" class="time-button" aria-describedby="time-button-hint" title="Change the date (double-click to type it)">
+                <span id="time-label"></span>
+              </button>
+              <span id="time-button-hint" class="visually-hidden">Change the date</span>
+              <input id="date" type="date" aria-label="Date" tabindex="-1" />
+            </div>
             <button id="next-day" type="button" class="icon-btn chevron" aria-label="Next day" title="Next day (→)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
             </button>
-            <button id="now" type="button" class="icon-btn line-icon" aria-label="Back to the current time" title="Back to the current time">
-              <!-- A clock face inside an arrow turning back. -->
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.7-6.2M3 3.5v5h5M12 7.5V12l3 2" /></svg>
-            </button>
-            <button id="play" type="button" class="icon-btn" aria-label="Play" aria-pressed="false">
-              <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
-              <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" /></svg>
-            </button>
           </div>
-          <div class="slider-wrap">
-            <input id="slider" type="range" min="0" max="1440" step="1" aria-label="Time of night" />
-          </div>
-          <div class="time-readout">
-            <output id="time-label" for="slider"></output>
-            <span id="sky-state" class="pill"></span>
+          <!-- The slider sits in the chart's plot column (see .tl-row), so its
+               thumb lines up with the time line in the rows below. While it's
+               being moved, a tip above the thumb says how dark the sky is.
+               The name column beside it holds the slider's own two buttons. -->
+          <div class="slider-row">
+            <div class="slider-actions">
+              <button id="now" type="button" class="icon-btn line-icon" aria-label="Back to the current time" title="Back to the current time">
+                <!-- A clock face inside an arrow turning back. -->
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.7-6.2M3 3.5v5h5M12 7.5V12l3 2" /></svg>
+              </button>
+              <button id="play" type="button" class="icon-btn" aria-label="Play" aria-pressed="false">
+                <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+                <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" /></svg>
+              </button>
+            </div>
+            <div class="slider-wrap">
+              <!-- Sunset and sunrise, each above its place on the slider. -->
+              <div id="sun-times" class="sun-times"></div>
+              <div id="slider-track" class="slider-track"></div>
+              <!-- The hour labels: the axis for the slider and the chart below. -->
+              <div id="slider-scale" class="tl-scale slider-scale" aria-hidden="true"></div>
+              <span id="sky-state" class="slider-tip" aria-live="off"></span>
+              <input id="slider" type="range" min="0" max="1440" step="1" aria-label="Time of night" />
+            </div>
           </div>
         </section>
 
-        <section class="section" aria-labelledby="bodies-h">
-          <div class="section-head">
-            <h2 id="bodies-h">Objects</h2>
-          </div>
-          <div id="chips" class="chips" role="group" aria-label="Objects to show"></div>
-        </section>
-
-        <section class="section" aria-labelledby="info-h">
-          <h2 id="info-h" class="visually-hidden">Tonight</h2>
+        <section class="section chart" aria-labelledby="info-h">
+          <h2 id="info-h" class="visually-hidden">Objects tonight</h2>
           <ul id="info" class="info"></ul>
         </section>
       </aside>
@@ -150,6 +159,13 @@
           </label>
           <p class="muted twilight-note">
             Sets when each object counts as observable.
+          </p>
+          <label class="setting-check">
+            <input id="naked-eye" type="checkbox" checked />
+            Naked-eye objects only
+          </label>
+          <p class="muted twilight-note">
+            Uranus and Neptune need binoculars or a telescope. While this is on they're listed when visible, but stay off unless you switch them on yourself.
           </p>
         </section>
 

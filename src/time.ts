@@ -87,21 +87,55 @@ export function nightWindow(date: Date, tz: string): { start: Date; end: Date } 
   return { start: noon(day), end: noon(next) };
 }
 
+// The formats used for display, in the visitor's own locale. Formatters are
+// slow to build and these run every frame of playback, so each is made once
+// per time zone.
+const FORMATS = {
+  time: { hour: '2-digit', minute: '2-digit' },
+  clock: { hour: 'numeric', minute: '2-digit' },
+  hour: { hour: 'numeric' },
+  date: { weekday: 'short', month: 'short', day: 'numeric' },
+  dateYear: { month: 'short', day: 'numeric', year: 'numeric' },
+  zone: { timeZoneName: 'short' },
+} satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+const displayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function display(format: keyof typeof FORMATS, tz: string): Intl.DateTimeFormat {
+  const key = `${format}|${tz}`;
+  let f = displayFormatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(undefined, { timeZone: tz, ...FORMATS[format] });
+    displayFormatters.set(key, f);
+  }
+  return f;
+}
+
 export function formatTime(date: Date, tz: string): string {
-  return date.toLocaleTimeString(undefined, { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+  return display('time', tz).format(date);
 }
 
 /** Like formatTime, but without a leading zero on the hour: for labels on the sky. */
 export function formatClock(date: Date, tz: string): string {
-  return date.toLocaleTimeString(undefined, { timeZone: tz, hour: 'numeric', minute: '2-digit' });
+  return display('clock', tz).format(date);
 }
 
 export function formatHour(date: Date, tz: string): string {
-  return date.toLocaleTimeString(undefined, { timeZone: tz, hour: 'numeric' });
+  return display('hour', tz).format(date);
 }
 
 export function formatDate(date: Date, tz: string): string {
-  return date.toLocaleDateString(undefined, { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric' });
+  return display('date', tz).format(date);
+}
+
+/**
+ * The date for the main readout: "Sat, Oct 3" in the current year, and
+ * "Oct 3, 2027" in any other, where the year matters more than the weekday
+ * (and there isn't room for both).
+ */
+export function formatReadoutDate(date: Date, tz: string, now = new Date()): string {
+  const sameYear = wallTime(date, tz).year === wallTime(now, tz).year;
+  return display(sameYear ? 'date' : 'dateYear', tz).format(date);
 }
 
 /** YYYY-MM-DD in `tz`, for <input type="date">. */
@@ -111,7 +145,7 @@ export function isoDate(date: Date, tz: string): string {
 }
 
 export function tzAbbrev(date: Date, tz: string): string {
-  const p = new Intl.DateTimeFormat(undefined, { timeZone: tz, timeZoneName: 'short' })
+  const p = display('zone', tz)
     .formatToParts(date)
     .find((x) => x.type === 'timeZoneName');
   return p?.value ?? tz;

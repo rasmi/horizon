@@ -216,8 +216,8 @@ function passEvents(id: BodyId, obs: A.Observer, samples: Sample[], sun: Sample[
   };
 }
 
-/** Daylight ends, for drawing purposes, once the Sun's upper edge is down. */
-const SUN_DOWN = -0.833;
+/** Daylight ends, for drawing purposes, once the Sun's upper edge is down: its altitude at sunset and sunrise. */
+export const SUN_DOWN = -0.833;
 
 /** How far each end of a cycle path runs on past the cycle: an hour, about 15° of sky. */
 const PATH_OVERLAP_STEPS = 60 / STEP_MINUTES;
@@ -315,14 +315,17 @@ const NAKED_EYE: BodyId[] = ['Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Sat
 /** Shorter than this and an object isn't worth showing by default. */
 const MIN_OBSERVABLE_MS = 20 * 60000;
 
+/** Observable too, but only through binoculars or a telescope. */
+const TELESCOPIC: BodyId[] = ['Uranus', 'Neptune'];
+
 /**
- * The default selection: the Moon, plus the naked-eye planets observable on
- * this night. The Moon is always included: it's visible in twilight and
- * daylight too (a thin evening crescent sets before it's fully dark), and it
- * governs how bright the sky is.
+ * The default selection: the Moon, plus the planets observable on this
+ * night; just the naked-eye ones, unless `nakedEyeOnly` is off. The Moon is
+ * always included: it's visible in twilight and daylight too (a thin evening
+ * crescent sets before it's fully dark), and it governs how bright the sky is.
  */
-export function observableTonight(night: NightData): BodyId[] {
-  return NAKED_EYE.filter((id) => {
+export function observableTonight(night: NightData, nakedEyeOnly = true): BodyId[] {
+  return (nakedEyeOnly ? NAKED_EYE : [...NAKED_EYE, ...TELESCOPIC]).filter((id) => {
     if (id === 'Moon') return true;
     const windows = night.bodies.get(id)?.observable ?? [];
     const total = windows.reduce((ms, w) => ms + (w.end.getTime() - w.start.getTime()), 0);
@@ -348,6 +351,6 @@ export function twilightLabel(sunAlt: number): string {
   if (sunAlt > -0.833) return 'Daylight';
   if (sunAlt > -6) return 'Civil twilight';
   if (sunAlt > -12) return 'Nautical twilight';
-  if (sunAlt > -18) return 'Astro twilight'; // short, to fit beside the time on one line
+  if (sunAlt > -18) return 'Astronomical twilight';
   return 'Dark';
 }

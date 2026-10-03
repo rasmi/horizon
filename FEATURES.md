@@ -21,7 +21,12 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   dark the sky is. Press play to run through the night; touching the slider
   pauses it. Hold the slider against either end and time keeps running that
   way, into the next or previous night, until you let go or pull back.
-- ‹ › step a day at the same clock time. On desktop, ←/→ step a day and ↑/↓ an
+- The date and time at the top of the time controls is also the date picker:
+  click it for a calendar, or double-click it to type a date.
+- Sunset and sunrise are marked above the slider at their places along it;
+  click either to jump to that moment.
+- ‹ › step a day at the same clock time (hold one to keep stepping, faster
+  and faster). On desktop, ←/→ step a day and ↑/↓ an
   hour (except while typing or in the slider, where arrows behave normally).
   These keys replace Street View's own keyboard panning; dragging still pans.
 - The slider and the timeline share one time axis, noon to noon, with daytime
@@ -53,17 +58,30 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   left out until you zoom in.
 - **Markers.** Each object has a marker at the chosen time, sized by
   brightness. Arrows at the screen edge point to objects that are up but out
-  of view. Tap one, or an object's name in the panel, to turn toward it.
+  of view. Tap one to turn toward it.
 - **Horizon.** A line at 0° with compass letters.
 
 ## Which objects
 
-- Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus and Neptune can each
-  be switched on or off.
-- By default the objects shown are the Moon (always) and the naked-eye planets
-  (Mercury to Saturn) observable for at least 20 minutes on the night being
-  viewed, and the selection follows the night and place. Toggling any object
-  makes the selection yours: it's then kept and stored in the link.
+- Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus and Neptune each
+  have a row in the chart. The dot at the left of the row switches the object
+  on or off (filled is on), and the name beside it turns the view toward it.
+- The Sun and Moon always head the chart (the Sun switched off unless you
+  turn it on). After them come the planets visible tonight: those observable
+  for at least 20 minutes on the night being viewed. The rest follow under a divider. Both groups keep
+  the usual order: Sun, Moon, then the planets outward from the Sun.
+- Uranus and Neptune are listed with the visible objects when they're
+  observable, but they need binoculars or a telescope, so they stay off while
+  "Naked-eye objects only" is on (the default; it's in the ⓘ settings). With
+  it off they're switched on like the other planets. The setting goes in the
+  link when it's off.
+- By default the visible ones are on (bar those two) and the rest off, and that follows the
+  night and place as you change them.
+- Switching one yourself is kept: an object you turned on stays on (pinned)
+  even on nights it isn't visible, and one you turned off stays off. Only
+  those choices go in the link. Switching an object back to what the night
+  would show hands it back to the automatic behaviour. Either way, a row's
+  group still says whether the object is visible that night.
 
 ## The info panel
 
@@ -74,12 +92,31 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   solid while the object is **observable**: up, with the Sun below your
   chosen twilight level (civil, nautical or astronomical). In between, the
   fill deepens through twilight. A line marks the
-  chosen time, and the background shows how dark the sky is. An object's name
-  is brighter while it's up.
-- Click a row's plot for its details: where it is now, its brightness, the
-  rise, transit and set of tonight's pass (the one that peaks after dark),
-  its peak altitude and the observable window. For the Sun: sunset, when it
-  gets dark, when darkness ends, and sunrise.
+  chosen time, and the background shows how dark the sky is. Objects that
+  are switched off keep their row, dimmed.
+- The slider sits directly above the chart, exactly as wide as the plots, so
+  its thumb lines up with the time line in every row. The date and time are
+  shown above it.
+- In an open row, clicking a rise, transit or set label, or the transit dot
+  and its peak altitude, jumps to that moment.
+- An open plot can be dragged along to scrub the time, like the slider,
+  including holding it past either end to run on into the next or previous
+  night. While you drag an object's plot the view stays on that object,
+  following it across the sky (and along the horizon while it's below).
+- Click a row's plot to open it. The plot grows taller and its events are
+  written under it at their own times along the axis: the rise, transit
+  (with the peak altitude, also dotted on the curve) and set of tonight's
+  pass, the one that peaks after dark; for the Sun, sunset, sunrise and when
+  darkness starts and ends. (The observable window is the solid part of the
+  plot; hovering the plot gives its times.) Where
+  the object is at the chosen time is marked on the plot too: a dot where
+  the time line crosses the curve, with its altitude and direction beside it
+  (kept clear of the peak's label). Beside the plot, under the name, is its
+  brightness. Every rise and set the plot shows is
+  labelled under its own crossing, with its own time: so an object that's
+  still up at the start of the window (the tail of the pass before) has that
+  set labelled there. An event of tonight's pass that the plot doesn't show
+  at all sits at the nearer end of the axis, marked ‹ or ›.
 - On desktop the panel sits on the left, and the tab on its edge tucks it away
   to give Street View the whole window (remembered in that browser). On
   phones it's a bottom sheet.

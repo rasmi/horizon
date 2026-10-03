@@ -464,7 +464,10 @@ export class Overlay {
     const out: RiseSetLabel[] = [];
     ctx.save();
     ctx.font = LABEL_FONT;
-    for (let i = 0; i + 1 < s.length; i++) {
+    // Not on the path's fading ends (see drawPath): a crossing there belongs
+    // to the day before or after.
+    const fade = Math.min(summary.pathOverlap, Math.floor((s.length - 1) / 2));
+    for (let i = fade; i + 1 < s.length - fade; i++) {
       const a = s[i];
       const b = s[i + 1];
       const rising = a.alt <= 0 && b.alt > 0;

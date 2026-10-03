@@ -10,6 +10,8 @@
   --good: #7ddc8f;
   --radius: 12px;
   --panel-w: 360px;
+  /* The chart's name column, which the slider's row shares. */
+  --name-w: 76px;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
   line-height: 1.4;
@@ -255,8 +257,8 @@ body.map-hidden #map-toggle:hover {
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* While open, a chevron pointing the way the card collapses: down on desktop
-   (the card sits at the bottom), up on phones (it sits at the top). */
+/* While open, a chevron pointing the way the card collapses: down, as the
+   card sits at the bottom of the view. */
 #map-toggle .i-chevron {
   transform: rotate(180deg);
 }
@@ -328,17 +330,10 @@ h2 {
   gap: 10px;
 }
 
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 #location-label {
   margin: 0;
   font-size: 12px;
+  text-align: center;
 }
 
 #location-label:empty {
@@ -356,9 +351,17 @@ h2 {
   min-width: 0;
 }
 
+/* Google's search box, dressed like the panel's own controls: the same
+   height, fill, border and corners as the buttons beside it. (Its insides
+   are Google's; these are the properties it lets a page set.) */
 #search gmp-place-autocomplete {
   width: 100%;
+  height: 36px;
   color-scheme: dark;
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
 }
 
 .btn,
@@ -437,41 +440,100 @@ input[type='date'] {
 
 .time-row {
   display: flex;
-  gap: 8px;
+  gap: 2px;
   align-items: center;
 }
 
-.date-field {
-  flex: 1;
-  display: flex;
-}
-
-input[type='date'] {
-  flex: 1;
-  padding: 0 8px;
-  min-width: 0;
-}
-
-.time-readout {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The time stays on one line whatever the sky label beside it says, so the
-   content below doesn't shift as the night is scrubbed; the label gives way. */
-#time-label {
-  font-weight: 600;
-  white-space: nowrap;
+.time-row .icon-btn {
+  width: 24px;
+  height: 28px;
+  min-height: 28px;
   flex: none;
 }
 
-.time-readout .pill {
+.time-row .icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The time section starts with the readout, a heading of sorts: it doesn't
+   need the full gap that separates the other sections. */
+.section.time {
+  margin-top: -10px;
+}
+
+.time-readout {
+  container-type: inline-size;
+  position: relative;
+  flex: 1;
   min-width: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* The date and time is a button that opens the calendar; it lights up on
+   hover to say so. */
+.time-button {
+  display: flex;
+  max-width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+.time-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* The chosen date and time: on one line, in even-width digits, so nothing
+   below shifts as the night is scrubbed. */
+#time-label {
+  /* As large as the space between the day arrows allows: sized from that
+     space's width (a typical readout is about 13 times as wide as its font
+     size), so it grows on a wider phone or panel. A readout that's longer
+     than typical is then shrunk to fit by the script (fitTimeLabel).
+     The fixed size is for browsers without container units. */
+  font-size: 19px;
+  font-size: clamp(16px, 7.5cqw, 26px);
+  font-weight: 600;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The real date field: out of sight under the button, which opens its
+   calendar there. */
+#date {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Double-clicked: the field itself takes the readout's place, to type a date into. */
+.time-readout.editing .time-button {
+  display: none;
+}
+
+.time-readout.editing #date {
+  position: static;
+  width: auto;
+  height: auto;
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  font-size: 16px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* ---------- info dialog ---------- */
@@ -554,43 +616,170 @@ kbd {
   }
 }
 
-.pill {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+/* The slider shares the chart's columns: an empty name column, then the
+   slider over the plots, so the thumb sits above the rows' time line. */
+.slider-row {
+  display: grid;
+  grid-template-columns: var(--name-w) 1fr;
+  column-gap: 8px;
+  align-items: start;
+  /* Room above the slider for the sunset and sunrise times, and for the tip
+     that covers them while the thumb is being moved. */
+  margin-top: 5px;
+}
+
+/* Sunset and sunrise, each written above its own place on the slider. */
+.sun-times {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% - 5px);
+  height: 14px;
+  font-size: 11px;
+  line-height: 14px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.pill:empty {
-  display: none;
+/* Each is a button that jumps to that moment. A little padding makes it
+   easier to hit; it sits above the slider, whose input would otherwise
+   take presses along the label's lower edge. */
+.sun-times button {
+  position: absolute;
+  bottom: -2px;
+  z-index: 1;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
-/* Slider whose track shows sky darkness through the night. */
+.sun-times button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* A very short night: the two turn away from each other instead of colliding. */
+.sun-times button.before {
+  transform: translateX(-100%);
+}
+
+.sun-times button.after {
+  transform: none;
+}
+
+.sun-icon {
+  width: 14px;
+  height: 12px;
+  flex: none;
+  fill: none;
+  stroke: #ffc93c;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* How dark the sky is, in a tip above the thumb while the slider is being
+   moved (dragged, or stepped from the keyboard). It sits in the gap under
+   the date and time, so that stays readable. */
+.slider-tip {
+  position: absolute;
+  bottom: calc(100% - 5px);
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #2a3140;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+  z-index: 1;
+}
+
+.slider-wrap.held .slider-tip:not(:empty),
+.slider-wrap:has(#slider:focus-visible) .slider-tip:not(:empty) {
+  opacity: 1;
+}
+
+/* Back-to-now and play, small, in the name column beside the slider. */
+.slider-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.slider-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+}
+
+.slider-actions .icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.slider-wrap {
+  position: relative;
+  height: 28px;
+  /* Room below the track for the hour labels. */
+  margin-bottom: 10px;
+}
+
+.slider-wrap .slider-scale {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 22px;
+}
+
+/* The track, showing sky darkness through the night, is drawn separately
+   from the input so that it's exactly as wide as the plots. */
+.slider-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 9px;
+  height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #333, #333);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+/* A range input keeps its thumb inside its own width, so the thumb's centre
+   stops half a thumb short of each end. Half a thumb wider each side, and
+   the centre runs the track's full length. */
 #slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 100%;
+  position: absolute;
+  top: 0;
+  left: -11px;
+  width: calc(100% + 22px);
   height: 28px;
   background: transparent;
   margin: 0;
   cursor: pointer;
-  --track: linear-gradient(to right, #333, #333);
 }
 
 #slider::-webkit-slider-runnable-track {
   height: 10px;
-  border-radius: 5px;
-  background: var(--track);
-  border: 1px solid var(--line);
+  background: transparent;
 }
 
 #slider::-moz-range-track {
   height: 10px;
-  border-radius: 5px;
-  background: var(--track);
-  border: 1px solid var(--line);
+  background: transparent;
 }
 
 #slider::-webkit-slider-thumb {
@@ -599,17 +788,20 @@ kbd {
   height: 22px;
   margin-top: -7px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 3px solid var(--panel-solid);
-  box-shadow: 0 0 0 1px var(--accent);
+  /* Filled with the sky's colour at the chosen time (set from the script),
+     inside a white ring that stands out on any part of the track. */
+  background: var(--sky, var(--accent));
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
 #slider::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--accent);
-  border: 3px solid var(--panel-solid);
+  background: var(--sky, var(--accent));
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
 }
 
 .twilight {
@@ -625,50 +817,41 @@ kbd {
   font-size: 13px;
 }
 
+.setting-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  cursor: pointer;
+}
+
+.setting-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .dialog-section .twilight-note {
   margin: 6px 0 0;
   font-size: 12px;
 }
 
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.chip[aria-pressed='true'] {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--c) 60%, transparent);
-  background: color-mix(in srgb, var(--c) 14%, transparent);
-}
-
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--c);
   flex: none;
 }
 
-.chip[aria-pressed='false'] .dot {
-  background: transparent;
-  border: 1.5px solid var(--c);
+/* The night as a timeline: one row per object, on the slider's time axis.
+   The slider itself is the row above (in the time section), so the chart
+   follows it without a section gap. */
+.section.chart {
+  margin-top: -18px;
 }
 
-/* The night as a timeline: one row per object, on the slider's time axis. */
 .info {
   list-style: none;
   margin: 0;
@@ -679,10 +862,55 @@ kbd {
 
 .tl-row {
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: var(--name-w) 1fr;
   column-gap: 8px;
-  align-items: center;
+  align-items: start;
   font-size: 13px;
+  /* The height of the row's plot; taller while the row is open. */
+  --plot-h: 24px;
+}
+
+.tl-row.open {
+  --plot-h: 54px;
+  margin-bottom: 6px;
+}
+
+/* While a plot is being dragged: the pointer may wander over the rest of
+   the page, which shouldn't select its text or change the cursor. */
+body.scrubbing {
+  user-select: none;
+  cursor: ew-resize;
+}
+
+/* An open plot can be dragged along to scrub the time. On a touch screen
+   that's a sideways drag; an up-and-down one still scrolls the panel. */
+.tl-row.open .tl-track {
+  cursor: ew-resize;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.tl-left,
+.tl-right {
+  min-width: 0;
+}
+
+/* Between the objects visible tonight and the rest. */
+.tl-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tl-sep::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
 }
 
 .tl-scale {
@@ -698,31 +926,64 @@ kbd {
   white-space: nowrap;
 }
 
+/* An object's dot and name: two buttons. */
 .tl-name {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  font-weight: 600;
+  min-width: 0;
+}
+
+.tl-toggle,
+.tl-label {
+  min-height: 30px;
   background: none;
   border: 0;
   padding: 0;
-  color: var(--muted);
   cursor: pointer;
 }
 
-/* Up right now. */
-.tl-name.up {
-  color: var(--text);
+/* The dot is the on/off switch: filled while the object is shown on the sky,
+   hollow while it isn't. Its button is wider than the dot, to be easy to hit. */
+.tl-toggle {
+  display: grid;
+  place-items: center start;
+  width: 20px;
+  flex: none;
 }
 
-.tl-name:hover {
+.tl-toggle[aria-pressed='false'] .dot {
+  background: transparent;
+  border: 1.5px solid var(--c);
+}
+
+.tl-toggle:hover .dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 30%, transparent);
+}
+
+/* The name turns the view toward the object. */
+.tl-label {
+  font-weight: 600;
+  color: var(--text);
+  text-align: left;
+}
+
+.tl-label:hover {
   text-decoration: underline;
+}
+
+/* Not shown on the sky: its name is muted and its plot stays, dimmed. */
+.tl-row.off .tl-label {
+  color: var(--muted);
+}
+
+.tl-row.off .tl-plot {
+  opacity: 0.4;
 }
 
 .tl-track {
   position: relative;
-  height: 30px;
+  display: block;
+  height: calc(var(--plot-h) + 6px);
   width: 100%;
   background: none;
   border: 0;
@@ -739,7 +1000,7 @@ kbd {
   left: 0;
   right: 0;
   top: 3px;
-  height: 24px;
+  height: var(--plot-h);
   border-radius: 3px;
   opacity: 0.4;
 }
@@ -754,7 +1015,7 @@ kbd {
   left: 0;
   top: 3px;
   width: 100%;
-  height: 24px;
+  height: var(--plot-h);
   overflow: hidden;
   border-radius: 3px;
   /* The fill's gradient takes its colour from here. */
@@ -775,19 +1036,16 @@ kbd {
   vector-effect: non-scaling-stroke;
 }
 
-/* Hour marks: a light and a dark hairline side by side, so one of them shows
-   on the dark sky and the other on a bright bar. */
+/* Hour marks: light hairlines, stronger at the labelled hours. */
 .tl-tick {
   top: 3px;
-  height: 24px;
-  margin-left: -1px;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  border-right: 1px solid rgba(0, 0, 0, 0.16);
+  height: var(--plot-h);
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .tl-tick.major {
-  border-left-color: rgba(255, 255, 255, 0.26);
-  border-right-color: rgba(0, 0, 0, 0.34);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* The chosen time. */
@@ -798,47 +1056,199 @@ kbd {
   width: 2px;
   margin-left: -1px;
   border-radius: 1px;
-  background: var(--accent);
+  /* White with a dark edge, like the slider's thumb above it: the edge keeps
+     it visible where it crosses a pale plot (the Moon's). */
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
 }
 
-.tl-detail {
-  grid-column: 1 / -1;
-  margin: 0 0 8px 4px;
-  padding: 2px 0 2px 10px;
-  border-left: 2px solid var(--c);
+/* An open row: a dot on the curve at transit, where the peak is. */
+.tl-apex {
+  top: calc(3px + (1 - var(--peak)) * var(--plot-h));
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow:
+    0 0 0 1.5px var(--panel-solid),
+    0 0 0 2.5px var(--c);
+}
+
+/* The dot and the peak beside it jump to the transit when pressed. */
+.tl-row.open .tl-apex {
+  cursor: pointer;
+}
+
+/* One hit area for the two: an unseen box over the dot, the number, and
+   the gap between them, with a little margin all round. */
+.tl-apex::before {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: calc(4ch + 30px);
+  height: 25px;
+  font-size: 11px;
+}
+
+.tl-apex.flip::before {
+  left: auto;
+  right: -9px;
+}
+
+.tl-apex.covered::before {
+  width: 25px;
+}
+
+.tl-apex:hover::after {
+  text-decoration: underline;
+}
+
+/* The peak altitude, beside the dot. */
+.tl-apex::after {
+  content: attr(data-peak);
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  /* Kept inside the plot when the dot is right at the top. */
+  transform: translateY(max(-50%, calc(-1 * (1 - var(--peak)) * var(--plot-h))));
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  color: #fff;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+
+.tl-apex.flip::after {
+  left: auto;
+  right: 12px;
+}
+
+/* The chosen time is the transit: its own label says the altitude. */
+.tl-apex.covered::after {
+  display: none;
+}
+
+/* Where the object is at the chosen time: a dot where the time line crosses
+   the curve, and its altitude and direction beside it. */
+.tl-here {
+  left: var(--now, 0%);
+  top: calc(3px + (1 - var(--alt, 0)) * var(--plot-h));
+  width: 0;
+  height: 0;
+}
+
+.tl-here-dot {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.tl-here-label {
+  position: absolute;
+  left: 11px;
+  top: -7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  color: #fff;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+
+.tl-here.flip .tl-here-label {
+  left: auto;
+  right: 11px;
+}
+
+/* No room on either side (the peak's label is in the way): underneath. */
+.tl-here.drop .tl-here-label {
+  top: 6px;
+}
+
+/* Below the horizon: no dot, and a muted altitude just above the horizon line. */
+.tl-here.below .tl-here-dot {
+  display: none;
+}
+
+.tl-here.below .tl-here-label {
+  left: 5px;
+  top: -15px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.tl-here.below.flip .tl-here-label {
+  left: auto;
+  right: 5px;
+}
+
+/* Its events, written under the plot at their own times along the axis:
+   a tick at each moment, and its label beneath (nudged sideways only where
+   two would collide). */
+.tl-events {
+  position: relative;
+  height: 20px;
+  font-size: 11px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Each label is a button that jumps to its moment. */
+.tl-events > button {
+  position: absolute;
+  top: 3px;
+  transform: translateX(-50%);
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tl-events > button:hover {
+  text-decoration: underline;
+}
+
+.tl-events > .tl-mark {
+  position: absolute;
+}
+
+.tl-events > .tl-mark {
+  top: 0;
+  width: 1px;
+  height: 4px;
+  background: var(--muted);
+  transform: none;
+}
+
+/* What has no place on the axis, beside the plot and under the name: where
+   the object is now, its brightness, and events outside the window. */
+.tl-side {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-}
-
-.mag {
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-.info-now {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--muted);
-}
-
-.info-now.up {
-  color: var(--text);
-}
-
-.info-times {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  margin: 4px 0 0;
-  font-variant-numeric: tabular-nums;
-}
-
-.info-times dt {
   font-size: 11px;
+  line-height: 14px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tl-side .up {
+  color: var(--text);
 }
 
 .ev-icon {
@@ -853,18 +1263,6 @@ kbd {
   stroke-linejoin: round;
 }
 
-.info-times dd {
-  margin: 0;
-}
-
-.obs {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.obs.good {
-  color: var(--good);
-}
 
 
 /* ---------- markers ---------- */
@@ -1078,10 +1476,11 @@ kbd {
     width: 100%;
   }
 
+  /* Bottom-left, as on desktop: just above the sheet, and clear of Street
+     View's Google logo beneath it. */
   #map-wrap {
     left: 12px;
-    top: 12px;
-    bottom: auto;
+    bottom: calc(var(--sheet-h, 150px) + 34px);
     width: 132px;
     height: 132px;
   }
@@ -1090,11 +1489,6 @@ kbd {
   body.has-imagery:not(.map-hidden):not(.landing) #map-wrap {
     width: 156px;
     height: 169px;
-  }
-
-  /* On phones the card sits at the top, so the collapse chevron points up. */
-  #map-toggle .i-chevron {
-    transform: none;
   }
 
   #cap-select {
@@ -1132,6 +1526,62 @@ kbd {
     height: 4px;
     border-radius: 2px;
     background: rgba(255, 255, 255, 0.3);
+  }
+
+  .section.chart {
+    margin-top: -14px;
+  }
+
+  /* The handle above the title already gives it room: no need for the full
+     gap between sections as well. */
+  .panel-head {
+    margin-top: -20px;
+  }
+
+  /* A little air between the readout and the day arrows. */
+  .time-row {
+    gap: 8px;
+  }
+
+  /* Day arrows big enough for a thumb. */
+  .time-row .icon-btn {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+
+  .time-row .icon-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Collapsed, there's no chart to line up with: the slider takes all the
+     width its two buttons leave, with back-to-now before it and play after. */
+  #panel:not(.open) .slider-row {
+    grid-template-columns: auto 1fr auto;
+    column-gap: 18px;
+  }
+
+  #panel:not(.open) .slider-actions {
+    display: contents;
+  }
+
+  #panel:not(.open) #play {
+    order: 1;
+  }
+
+  /* With room to spare beside the slider, the two are thumb-sized too
+     (nudged up so they stay centred on the track). */
+  #panel:not(.open) .slider-actions .icon-btn {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    margin-top: -4px;
+  }
+
+  #panel:not(.open) .slider-actions .icon-btn svg {
+    width: 20px;
+    height: 20px;
   }
 
   /* Collapsed: just the time controls (or the search while landing). */
