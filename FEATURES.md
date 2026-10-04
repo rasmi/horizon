@@ -15,6 +15,14 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   (about half a second of dragging, or a 25° turn). Reopen it and it stays
   until you next look around.
 
+- On a phone, the compass button above Street View's zoom buttons turns the
+  view with the phone: it faces whatever the back of the phone points at, by
+  the phone's compass (corrected from magnetic to true north for the place
+  shown; a phone compass is still only good to several degrees). It only pans
+  the view; the paths stay fixed to the imagery as always. Dragging the view,
+  or turning to an object, switches it off. It replaces Street View's own
+  tilt control, which ignores the compass.
+
 ## Choosing a time
 
 - Pick a night and scrub through it with the slider, whose track shows how

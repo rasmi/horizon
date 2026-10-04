@@ -407,6 +407,27 @@ input[type='date'] {
   stroke-linejoin: round;
 }
 
+/* Compass mode, on phones: above Street View's zoom buttons, bottom-right. */
+#compass-btn {
+  position: absolute;
+  z-index: 2;
+  right: 10px;
+  bottom: 115px;
+  width: 40px;
+  height: 40px;
+}
+
+#compass-btn[hidden],
+body.landing #compass-btn {
+  display: none;
+}
+
+#compass-btn[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10131a;
+}
+
 /* The locate button's centre dot: filled in only while the place shown was
    set from the visitor's own location. */
 .locate-dot {

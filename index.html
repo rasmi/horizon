@@ -12,6 +12,12 @@
       <main id="view" aria-label="Street View with planet overlay">
         <div id="pano"></div>
         <div id="overlay"></div>
+        <!-- Phones only: turns the view with the phone, by its compass. It
+             stands where Street View's own tilt control would be (that one
+             ignores the compass, so it's switched off). -->
+        <button id="compass-btn" type="button" class="icon-btn line-icon" aria-label="Look around by turning the phone" title="Look around by turning the phone" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M15.5 8.5l-2 5-5 2 2-5z" /></svg>
+        </button>
         <div id="landing-hint" class="hint">
           <strong>Pick a spot.</strong><br />Search for a place, or select a place on the map.
           <button id="hint-locate" type="button" class="btn hint-locate">

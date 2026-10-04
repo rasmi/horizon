@@ -3,6 +3,7 @@ import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import tzlookup from 'tz-lookup';
 import { BODIES, computeNight, interpolate, observableTonight, type BodyId, type NightData } from './astro';
 import { axisFor, nightAxis, type TimeAxis } from './axis';
+import { declination, lookDirection, northOffset, steadyForNorth, turnToward } from './compass';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
@@ -27,6 +28,7 @@ const els = {
   search: $<HTMLDivElement>('search'),
   locationLabel: $<HTMLParagraphElement>('location-label'),
   locate: $<HTMLButtonElement>('locate-btn'),
+  compass: $<HTMLButtonElement>('compass-btn'),
   date: $<HTMLInputElement>('date'),
   prevDay: $<HTMLButtonElement>('prev-day'),
   nextDay: $<HTMLButtonElement>('next-day'),
@@ -226,6 +228,7 @@ function renderInfoPanel(): void {
     // Dragging along an object's own plot locks the view onto that object.
     onScrub: (fraction, id) => {
       pauseForScrub();
+      setCompass(false);
       following = id;
       dragTo(fraction);
     },
@@ -306,6 +309,7 @@ function lookAtBody(id: BodyId): void {
   setSheetOpen(false);
   els.overlay.classList.add('turning');
   // Turn to it, framed as it will be while followed, and stay locked onto it.
+  setCompass(false);
   following = id;
   follow();
   window.clearTimeout(turnTimer);
@@ -355,8 +359,10 @@ async function initMaps(key: string | undefined): Promise<void> {
     pov: { heading: state.heading, pitch: state.pitch },
     zoom: state.zoom,
     fullscreenControl: false,
+    // Street View's own tilt control ignores the compass (it starts from
+    // wherever the view was facing); compass mode, below, takes its place.
     motionTracking: false,
-    motionTrackingControl: true,
+    motionTrackingControl: false,
     addressControl: false,
     showRoadLabels: false,
     enableCloseButton: false,
@@ -1125,13 +1131,148 @@ const LOOKING_AROUND_MS = 400;
 const LOOKING_AROUND_DEG = 25;
 /** POV changes this close together belong to one continuous movement. */
 const SAME_MOVE_MS = 300;
-const lookingAround = { dragging: false, ms: 0, deg: 0, last: 0, heading: 0, pitch: 0 };
-els.pano.addEventListener('pointerdown', () => {
+const lookingAround = { dragging: false, ms: 0, deg: 0, last: 0, heading: 0, pitch: 0, x: 0, y: 0 };
+els.pano.addEventListener('pointerdown', (e) => {
   lookingAround.dragging = true;
   lookingAround.last = 0;
   // Taking hold of the view lets go of any object it was locked onto.
   following = null;
+  lookingAround.x = e.clientX;
+  lookingAround.y = e.clientY;
 }, true);
+// Dragging the view takes it back from the compass too. (A tap doesn't:
+// that's a step along the street.)
+els.pano.addEventListener('pointermove', (e) => {
+  const s = lookingAround;
+  if (compass.on && s.dragging && Math.hypot(e.clientX - s.x, e.clientY - s.y) > COMPASS_DRAG_PX) setCompass(false);
+}, true);
+
+// ---------- compass mode (see compass.ts) ----------
+
+/** How far a touch must move across the view to count as a drag. */
+const COMPASS_DRAG_PX = 10;
+/** How much of the way the view moves to each new reading: steadies the compass's jitter. */
+const COMPASS_SMOOTHING = 0.3;
+/** The same, for the slower correction that ties an iPhone's motion to its compass. */
+const COMPASS_NORTH_SMOOTHING = 0.05;
+/** How long to wait for a first reading before deciding there's no compass. */
+const COMPASS_WAIT_MS = 2500;
+
+const compass = {
+  on: false,
+  /** Whether a usable reading has arrived since it was switched on. */
+  seen: false,
+  timer: 0,
+  /** The view, as last set from a reading. */
+  heading: 0,
+  pitch: 0,
+  /** iPhones: what to add to their `alpha` (which starts anywhere) to measure it from north. */
+  north: null as number | null,
+  /** Whether that was learnt with the phone tilted enough to trust its compass. */
+  northSteady: false,
+};
+
+/**
+ * The compass's error at the place being shown, today (it's the real compass
+ * being corrected, not the sky's chosen time). Taken at the place on screen,
+ * which is where the phone is whenever lining up with the real sky matters.
+ */
+function magneticDeclination(): number {
+  if (state.lat === null || state.lng === null) return 0;
+  // It changes by well under a tenth of a degree across a ~10 km square.
+  const key = `${state.lat.toFixed(1)},${state.lng.toFixed(1)}`;
+  if (key !== declinationFor.key) {
+    let value = 0;
+    try {
+      value = declination(state.lat, state.lng, new Date());
+    } catch {
+      // No model for the date: leave the compass uncorrected.
+    }
+    declinationFor = { key, value };
+  }
+  return declinationFor.value;
+}
+let declinationFor = { key: '', value: 0 };
+
+type CompassReading =DeviceOrientationEvent & { webkitCompassHeading?: number; webkitCompassAccuracy?: number };
+
+function onOrientation(e: CompassReading): void {
+  if (!compass.on || !pano || e.alpha === null || e.beta === null || e.gamma === null) return;
+  let alpha = e.alpha;
+  if (e.webkitCompassHeading !== undefined) {
+    // Safari: motion that isn't tied to north, with a compass heading beside
+    // it. Ease the motion's zero toward the compass, so the view moves as
+    // smoothly as the motion while keeping the compass's sense of north.
+    // The compass says nothing useful while the phone is near upright
+    // (see compass.ts), so north is only learnt while it's tilted. A first
+    // reading taken upright is better than nothing, and is replaced outright
+    // by the first good one.
+    const steady = steadyForNorth(e.beta);
+    if ((e.webkitCompassAccuracy ?? 0) >= 0 && (steady || compass.north === null)) {
+      const north = northOffset(alpha, e.beta, e.webkitCompassHeading);
+      compass.north =
+        compass.north === null || !compass.northSteady ? north : turnToward(compass.north, north, COMPASS_NORTH_SMOOTHING);
+      compass.northSteady = steady;
+    }
+    if (compass.north === null) return;
+    alpha += compass.north;
+  } else if (!e.absolute) {
+    return; // motion alone, with nothing to say where north is
+  }
+  const to = lookDirection(alpha, e.beta, e.gamma);
+  to.heading += magneticDeclination(); // the phone's north is magnetic north
+  const share = compass.seen ? COMPASS_SMOOTHING : 1;
+  compass.seen = true;
+  compass.heading = turnToward(compass.heading, to.heading, share);
+  compass.pitch += (to.pitch - compass.pitch) * share;
+  pano.setPov({ heading: compass.heading, pitch: Math.max(-89, Math.min(89, compass.pitch)) });
+}
+
+function setCompass(on: boolean): void {
+  if (on === compass.on) return;
+  compass.on = on;
+  compass.seen = false;
+  compass.north = null;
+  compass.northSteady = false;
+  els.compass.setAttribute('aria-pressed', String(on));
+  window.clearTimeout(compass.timer);
+  // Android reports north-based readings as their own event; Safari as
+  // extras on the ordinary one.
+  for (const type of ['deviceorientationabsolute', 'deviceorientation']) {
+    if (on) window.addEventListener(type, onOrientation as EventListener);
+    else window.removeEventListener(type, onOrientation as EventListener);
+  }
+  if (!on) return;
+  following = null;
+  setMapHidden(true);
+  compass.timer = window.setTimeout(() => {
+    if (compass.seen) return;
+    setCompass(false);
+    toast("Couldn't read this device's compass.");
+  }, COMPASS_WAIT_MS);
+}
+
+els.compass.addEventListener('click', async () => {
+  if (compass.on) {
+    setCompass(false);
+    return;
+  }
+  // Safari asks the visitor first, and only from a press like this one.
+  const ask = (DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission;
+  if (ask) {
+    try {
+      if ((await ask.call(DeviceOrientationEvent)) !== 'granted') {
+        toast('Motion access is blocked, so the view can’t follow the phone.');
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+  setCompass(true);
+});
+// Offered on phones and tablets only: a laptop has no compass to read.
+els.compass.hidden = !('DeviceOrientationEvent' in window && matchMedia('(pointer: coarse)').matches);
 for (const type of ['pointerup', 'pointercancel']) {
   window.addEventListener(type, () => (lookingAround.dragging = false), true);
 }
