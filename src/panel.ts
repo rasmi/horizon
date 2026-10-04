@@ -493,7 +493,7 @@ export function renderInfo(
       <div class="tl-left">
         <span class="tl-name">
           <button type="button" class="tl-toggle" aria-pressed="${on}" aria-label="Show ${id}" title="${on ? 'Hide' : 'Show'} ${id}"><span class="dot"></span></button>
-          <button type="button" class="tl-label" title="Turn the view toward ${id}">${id}</button>
+          <button type="button" class="tl-label" title="${on ? 'Turn' : 'Show it and turn'} the view toward ${id}">${id}</button>
         </span>
       </div>
       <div class="tl-right">

@@ -223,7 +223,11 @@ const TIP_OVERHANG = 12;
 function renderInfoPanel(): void {
   renderInfo(els.info, night, { shown: state.bodies, visible: visibleTonight }, state.time.getTime(), tz, {
     onToggle: toggleBody,
-    onLook: lookAtBody,
+    // Pressing a name turns to the object, switching it on first if need be.
+    onLook: (id) => {
+      if (!state.bodies.includes(id)) toggleBody(id);
+      lookAtBody(id);
+    },
     onDetails: renderInfoPanel,
     // Dragging along an object's own plot locks the view onto that object.
     onScrub: (fraction, id) => {

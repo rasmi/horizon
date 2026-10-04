@@ -73,7 +73,8 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 - Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Uranus and Neptune each
   have a row in the chart. The dot at the left of the row switches the object
-  on or off (filled is on), and the name beside it turns the view toward it.
+  on or off (filled is on), and the name beside it turns the view toward it
+  (switching the object on first, if it was off).
 - The Sun and Moon always head the chart (the Sun switched off unless you
   turn it on). After them come the planets visible tonight: those observable
   for at least 20 minutes on the night being viewed. The rest follow under a divider. Both groups keep

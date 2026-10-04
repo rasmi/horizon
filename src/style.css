@@ -1108,7 +1108,7 @@ body.scrubbing {
   position: absolute;
   left: -9px;
   top: -9px;
-  width: calc(4ch + 30px);
+  width: calc(2ch + 33px);
   height: 25px;
   font-size: 11px;
 }
@@ -1122,8 +1122,13 @@ body.scrubbing {
   width: 25px;
 }
 
-.tl-apex:hover::after {
-  text-decoration: underline;
+/* The same cue again, round the dot and the peak together: the hit area
+   itself lights up, drawn a little inside its edges. */
+.tl-row.open .tl-apex:hover::before {
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.16) padding-box;
 }
 
 /* The peak altitude, beside the dot. */
@@ -1231,8 +1236,9 @@ body.scrubbing {
   position: absolute;
   top: 3px;
   transform: translateX(-50%);
-  padding: 2px 0;
+  padding: 2px 4px;
   border: 0;
+  border-radius: 6px;
   background: none;
   font: inherit;
   color: inherit;
@@ -1240,8 +1246,9 @@ body.scrubbing {
   cursor: pointer;
 }
 
+/* The same cue as the sunset and sunrise above the slider. */
 .tl-events > button:hover {
-  text-decoration: underline;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .tl-events > .tl-mark {
