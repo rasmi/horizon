@@ -3,4 +3,9 @@ dist
 .env.local
 .env.*.local
 .DS_Store
+# Kept locally, out of the repository: what the sky map was worked out with
+# (the evaluation, its notes and models, the catalogues as downloaded), and
+# the development code the sky map in src/sky/ was cut from.
+dev-assets/
+src/skyline/
 .claude

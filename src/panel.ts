@@ -10,6 +10,8 @@ import {
   type Sample,
 } from './astro';
 import { axisFor } from './axis';
+import { openSkyKey, type OpenSky, type Stretch } from './roofline';
+import { skyColor } from './skycolor';
 import { formatClock, formatDate, formatHour, formatTime, wallTime } from './time';
 
 const COMPASS16 = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
@@ -111,14 +113,6 @@ export function midnightMark(data: NightData, tz: string): string {
   return hairline(axisFor(data).toFraction(midnight) * 100, 1.5, 'rgba(255, 255, 255, 0.75)');
 }
 
-function skyColor(sunAlt: number): string {
-  if (sunAlt > SUN_DOWN) return '#7fb3e6'; // the same steps as twilightLabel
-  if (sunAlt > -6) return '#4d6fa8';
-  if (sunAlt > -12) return '#2b3f70';
-  if (sunAlt > -18) return '#1a2448';
-  return '#0b1024';
-}
-
 /** The sky's colour at time `t`, as on the slider's track: for the slider's thumb. */
 export function skyColorAt(data: NightData, t: number): string {
   const sun = interpolate(data.sun, t);
@@ -136,7 +130,33 @@ const ICON = {
   rise: icon('M6 10.5V2M2.5 5.5 6 2l3.5 3.5'),
   set: icon('M6 1.5V10M2.5 6.5 6 10l3.5-3.5'),
   transit: icon('M1.5 9.5C2.5 5 4 3 6 3s3.5 2 4.5 6.5M6 2.2v1.6'),
+  // An eye, open and closed, as on the view where a path meets the skyline (overlay.ts).
+  seen: icon('M1 6Q6 .6 11 6Q6 11.4 1 6ZM6 4.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z'),
+  hidden: icon('M1 5Q6 10 11 5M3.2 7.4 2.4 9.6M6 8.2v2.4M8.8 7.4l.8 2.2'),
 };
+
+/** Each eye under an open plot has this much room along the axis, in px: two nearer than that are moved apart. */
+const EYE_ROOM_PX = 17;
+/** A stretch in open sky, or behind something, shorter than this isn't marked in the chart: leaves, a pole. */
+const SKYLINE_MIN_MS = 15 * 60000;
+
+/**
+ * When tonight an object comes out from behind the skyline (`opens`) and
+ * when it goes behind it, by the sky map (roofline.ts): where a stretch in
+ * open sky meets one behind something, while the object is observable.
+ * Good to the five-minute samples they're worked out at.
+ */
+function skylineEvents(sky: OpenSky | undefined, observable: { start: Date; end: Date }[]): { t: number; opens: boolean }[] {
+  if (!sky) return [];
+  const long = (stretch: Stretch) => stretch[1] - stretch[0] >= SKYLINE_MIN_MS;
+  const observed = (t: number) => observable.some((w) => t >= w.start.getTime() && t <= w.end.getTime());
+  const out: { t: number; opens: boolean }[] = [];
+  for (const open of sky.open.filter(long)) {
+    if (observed(open[0]) && sky.behind.some((b) => long(b) && b[1] === open[0])) out.push({ t: open[0], opens: true });
+    if (observed(open[1]) && sky.behind.some((b) => long(b) && b[0] === open[1])) out.push({ t: open[1], opens: false });
+  }
+  return out;
+}
 
 /** A half Sun on the horizon with an arrow above it: going down, or coming up. */
 const sunIcon = (arrow: string) =>
@@ -390,8 +410,14 @@ export function renderInfo(
     onDetails: () => void;
     onScrub: (fraction: number, id: BodyId) => void;
     onScrubEnd: () => void;
-    onJump: (time: Date) => void;
+    onJump: (time: Date, id: BodyId) => void;
   },
+  /**
+   * Where the sky map is on: for each object, when tonight it's in open sky
+   * from here, behind something, or where the sky hasn't been looked at
+   * (roofline.ts). Each plot is then marked with it.
+   */
+  openSkies: Map<BodyId, OpenSky> | null = null,
 ): void {
   if (!data) {
     root.replaceChildren();
@@ -403,7 +429,8 @@ export function renderInfo(
   // through playback, so when none of those has changed, leave the rows be
   // and just bring the time-dependent parts up to date.
   // (And on the chart's width: labels are placed by how much room they have.)
-  const key = `${[objects.shown, objects.visible, [...expanded]].map((list) => list.join(',')).join('|')}|${root.clientWidth}`;
+  // (And on what the sky map says of each object's night, where that's on.)
+  const key = `${[objects.shown, objects.visible, [...expanded]].map((list) => list.join(',')).join('|')}|${root.clientWidth}|${openSkyKey(openSkies)}`;
   if (built && built.root === root && built.data === data && built.tz === tz && built.key === key) {
     const trackWidth = Math.max(120, root.clientWidth - NAME_COLUMN_PX);
     for (const id of expanded) {
@@ -480,10 +507,20 @@ export function renderInfo(
     // enough to observe, deepening through twilight between the two; and a
     // line along the top. (The Sun itself is solid whenever it's up.)
     const fade = `tl-fade-${id}`;
+    // By the sky map, where it's on: the part of the plot when the object is behind a building or a tree is dimmed, and
+    // the part when it's where the sky hasn't been looked at yet, dimmed a little.
+    const mine = openSkies?.get(id);
+    const shade = (list: Stretch[], name: string) =>
+      list.map(([a, b]) => `<rect class="${name}" x="${px(Math.max(a, t0))}" y="0" width="${(Number(px(Math.min(b, t0 + span))) - Number(px(Math.max(a, t0)))).toFixed(1)}" height="${PLOT_H}" />`).join('');
+    const hidden = mine
+      ? `<clipPath id="tl-clip-${id}"><path d="${area(s.samples, t0, t0 + span)}" /></clipPath>
+        <g clip-path="url(#tl-clip-${id})">${shade(mine.behind, 'tl-behind')}${shade(mine.unseen, 'tl-unseen')}</g>`
+      : '';
     const bars = `
       <svg class="tl-plot" viewBox="0 0 ${PLOT_W} ${PLOT_H}" preserveAspectRatio="none" aria-hidden="true">
         <defs><linearGradient id="${fade}" gradientUnits="userSpaceOnUse" x1="0" x2="${PLOT_W}">${fadeStops}</linearGradient></defs>
         <path d="${area(s.samples, t0, t0 + span)}" ${sun ? 'class="tl-obs"' : `fill="url(#${fade})"`} />
+        ${hidden}
         <path class="tl-line" d="${upRuns(s.samples).map(([a, b]) => line(s.samples, a, b)).join('')}" />
       </svg>`;
 
@@ -505,11 +542,21 @@ export function renderInfo(
         </button>
       </div>`;
 
-    const summary = sun
-      ? `sets ${time(data.sunEvents.sunset)}, rises ${time(data.sunEvents.sunrise)}`
-      : s.observable.length
-        ? `observable ${fmtWindows(s.observable, tz)}`
-        : 'not observable in darkness tonight';
+    // When it's clear of the skyline, by the sky map: said to the nearest five minutes, which is as near as it's known.
+    const clearly = !mine || sun || !s.observable.length
+      ? ''
+      : mine.clear.length
+        ? `In open sky from here ${mine.clear.map(([a, b]) => `${shortTime(formatClock(new Date(a), tz))}–${shortTime(formatClock(new Date(b), tz))}`).join(', ')}`
+        : mine.partlyUnseen
+          ? ''
+          : 'Behind the skyline from here all the while it’s observable';
+    const unseen = mine?.partlyUnseen && !sun ? 'Part of its path is through sky that hasn’t been looked at yet: turn the view along it' : '';
+    const summary =
+      (sun
+        ? `sets ${time(data.sunEvents.sunset)}, rises ${time(data.sunEvents.sunrise)}`
+        : s.observable.length
+          ? `observable ${fmtWindows(s.observable, tz)}`
+          : 'not observable in darkness tonight') + [clearly, unseen].filter(Boolean).map((text) => `. ${text}`).join('');
     // The dot switches the object on and off; its name turns the view toward it.
     li.querySelector<HTMLButtonElement>('.tl-toggle')!.addEventListener('click', () => actions.onToggle(id));
     li.querySelector<HTMLButtonElement>('.tl-label')!.addEventListener('click', () => actions.onLook(id));
@@ -529,7 +576,7 @@ export function renderInfo(
       // The transit dot and the peak beside it jump to the transit. (They're
       // inside the plot, which is itself a button, so the click is caught here.)
       if (s.transit && (ev.target as Element).closest('.tl-apex')) {
-        actions.onJump(s.transit);
+        actions.onJump(s.transit, id);
         return;
       }
       if (!expanded.delete(id)) expanded.add(id);
@@ -623,6 +670,21 @@ export function renderInfo(
         : '';
     // And where the object is at the chosen time: a dot where the time line
     // crosses the curve, with its altitude beside it (see showNow).
+    // And, by the sky map, when it comes out from behind the skyline and when it goes behind it: an eye at each, open
+    // or closed, as on the view where the path meets the skyline, in a lane of their own under the plot. Pressing one
+    // jumps to its time. Laid out as the labels under them are: a tick at each one's true moment, and the eye beneath,
+    // nudged sideways only where two would touch.
+    const eyes = sun
+      ? ''
+      : spread(skylineEvents(mine, s.observable).map((ev) => ({ ev, at: pct(ev.t), width: (EYE_ROOM_PX / trackWidth) * 100 })))
+          .map(({ ev, at }) => {
+            const says = full(ev.opens ? 'In open sky from about' : 'Behind the skyline from about', new Date(ev.t));
+            return (
+              `<span class="tl-mark" style="left:${pct(ev.t).toFixed(2)}%"></span>` +
+              `<button type="button" class="tl-eye" data-t="${ev.t}" title="${says}. Jump to it" aria-label="${says}. Jump to it" style="left:${at.toFixed(2)}%">${ev.opens ? ICON.seen : ICON.hidden}</button>`
+            );
+          })
+          .join('');
     li.querySelector<HTMLElement>('.tl-track')!.insertAdjacentHTML(
       'beforeend',
       `${apex}<span class="tl-here"><span class="tl-here-dot"></span><span class="tl-here-label"></span></span>`,
@@ -630,10 +692,19 @@ export function renderInfo(
 
     li.querySelector<HTMLElement>('.tl-right')!.insertAdjacentHTML(
       'beforeend',
-      `<div class="tl-events">${marks}${labels}</div>`,
+      `${eyes ? `<div class="tl-eyes">${eyes}</div>` : ''}<div class="tl-events">${marks}${labels}</div>`,
     );
-    for (const button of li.querySelectorAll<HTMLButtonElement>('.tl-events button')) {
-      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t))));
+    for (const button of li.querySelectorAll<HTMLButtonElement>('.tl-events button, .tl-eyes button')) {
+      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id));
+    }
+    // And, by the sky map, what the eyes on the plot can't say: that it's behind the skyline all the while, or that part
+    // of its path hasn't been looked at. (When it's in open sky is the eyes' to say, and the plot's tooltip's.)
+    const noEyes = mine && !sun && s.observable.length && !mine.clear.length && !mine.partlyUnseen ? clearly : '';
+    if (noEyes || unseen) {
+      const note = document.createElement('div');
+      note.className = 'tl-clear';
+      note.textContent = [noEyes, unseen].filter(Boolean).join('. ') + '.';
+      li.querySelector<HTMLElement>('.tl-right')!.append(note);
     }
 
     // Beside the plot. (An object whose transit isn't on the axis has no dot

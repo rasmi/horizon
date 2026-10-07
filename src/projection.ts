@@ -80,6 +80,25 @@ export function project(alt: number, az: number, cam: Camera): ScreenPoint {
   return { x, y, visible, z: p.z };
 }
 
+/** The reverse of `project`: the direction a point of the viewport looks in. */
+export function unproject(x: number, y: number, cam: Camera): { alt: number; az: number } {
+  const fl = focalLength(cam);
+  const cx = (x - cam.width / 2) / fl;
+  const cy = (cam.height / 2 - y) / fl;
+  const sh = Math.sin(cam.heading * RAD);
+  const ch = Math.cos(cam.heading * RAD);
+  const sp = Math.sin(cam.pitch * RAD);
+  const cp = Math.cos(cam.pitch * RAD);
+  // forward + cx·right + cy·up, in the world frame (x east, y north, z up).
+  const dx = cp * sh + cx * ch - cy * sp * sh;
+  const dy = cp * ch - cx * sh - cy * sp * ch;
+  const dz = sp + cy * cp;
+  return {
+    alt: Math.atan2(dz, Math.hypot(dx, dy)) / RAD,
+    az: ((Math.atan2(dx, dy) / RAD) % 360 + 360) % 360,
+  };
+}
+
 /**
  * Where to place an off-screen indicator: the point on the viewport edge
  * (inset by `margin`) in the direction of the target, plus the angle.

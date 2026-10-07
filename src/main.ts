@@ -1,4 +1,6 @@
 import './style.css';
+// First, before Street View exists: see the file.
+import { setSkyEnabled, skyEnabled, skyOffered } from './sky/preserve';
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import tzlookup from 'tz-lookup';
 import { BODIES, computeNight, interpolate, observableTonight, type BodyId, type NightData } from './astro';
@@ -8,6 +10,11 @@ import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } 
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
 import { streetViewHfov, type Camera } from './projection';
+import { openSky, openSkyKey, type OpenSky } from './roofline';
+import type { SkyMap } from './sky';
+import type { ChartFrame, SkyChart } from './skychart';
+import { duskShare } from './skycolor';
+import type { Catalogue } from './stars';
 import { flushState, readState, shownBodies, writeState, type Twilight } from './state';
 import { formatReadoutDate, formatTime, isoDate, nightWindow, shiftDays, tzAbbrev, wallTime, zonedToDate } from './time';
 
@@ -43,6 +50,8 @@ const els = {
   skyState: $<HTMLSpanElement>('sky-state'),
   twilight: $<HTMLSelectElement>('twilight'),
   nakedEye: $<HTMLInputElement>('naked-eye'),
+  skyChart: $<HTMLInputElement>('sky-chart'),
+  skyGlow: $<HTMLInputElement>('sky-glow'),
   info: $<HTMLUListElement>('info'),
   share: $<HTMLButtonElement>('share-btn'),
   infoBtn: $<HTMLButtonElement>('info-btn'),
@@ -63,8 +72,11 @@ let nightKey = '';
 let pano: google.maps.StreetViewPanorama | null = null;
 /** Steps to an older (-1) or newer (+1) capture; set once Street View is up. */
 let stepCapture: (dir: -1 | 1) => void = () => {};
+/** Goes straight to a panorama by its ID, as a newly chosen place (for the sky map's development panel); false if it can't be opened. Set once Street View is up. */
+let showPano: (id: string) => Promise<boolean> = async () => false;
 
-const overlay = new Overlay(els.overlay, lookAtBody);
+// (A press on an object's name over the view turns to it; one on one of its times goes to that time, on that object.)
+const overlay = new Overlay(els.overlay, lookAtBody, (t, id) => jumpTo(new Date(t), id));
 
 // ---------- toast ----------
 
@@ -110,6 +122,7 @@ function recompute(): void {
   onByDefault = night ? observableTonight(night, state.nakedEyeOnly) : [];
   state.bodies = shownBodies(onByDefault, state.overrides);
   syncTimeControls();
+  refreshOpenSky(false);
   renderInfoPanel();
   requestRender();
 }
@@ -130,18 +143,95 @@ let following: BodyId | null = null;
  * view stays level, already looking at where the object will come up.
  */
 function follow(): void {
-  const pos = following && night && interpolate(night.bodies.get(following)?.samples ?? [], state.time.getTime());
+  const to = followTarget();
+  // (While the app is turning to the object, that turn's own frames head for it: see turnToFollowed. And while it's
+  // running to a moment of the object's, that run turns the view: see jumpTo.)
+  if (!pano || !to || turn || glide?.view) return;
+  pano.setPov(to);
+}
+
+/** Where the view faces while it follows its object (see `follow`), at the chosen time or at another (ms) of the same night; null if it's following nothing. */
+function followTarget(at = state.time.getTime()): { heading: number; pitch: number } | null {
+  const pos = following && night && interpolate(night.bodies.get(following)?.samples ?? [], at);
   const cam = camera();
-  if (!pano || !pos || !cam) return;
+  if (!pos || !cam) return null;
   const vfov = (2 * Math.atan(Math.tan((cam.hfov * Math.PI) / 360) * (cam.height / cam.width)) * 180) / Math.PI;
   const horizonInView = vfov * (0.5 - FOLLOW_HORIZON_MARGIN);
   const objectInView = pos.alt - vfov * (0.5 - FOLLOW_TOP_MARGIN);
-  const pitch = Math.max(Math.min(pos.alt, horizonInView), objectInView, 0);
-  pano.setPov({ heading: pos.az, pitch: Math.min(89, pitch) });
+  const framed = Math.max(Math.min(pos.alt, horizonInView), objectInView, 0);
+  // Zoomed well in, there's no keeping the horizon in view with the object: holding to it would put the object up at
+  // the view's top edge, and turn away from an object that was in the middle. So a close view centres on the object
+  // itself; between a view FOLLOW_CENTRE_FROM degrees tall and one FOLLOW_CENTRE_BY, part-way.
+  const close = Math.max(0, Math.min(1, (FOLLOW_CENTRE_FROM - vfov) / (FOLLOW_CENTRE_FROM - FOLLOW_CENTRE_BY)));
+  const centred = Math.max(pos.alt, 0);
+  const pitch = framed + (centred - framed) * close * close * (3 - 2 * close);
+  return { heading: pos.az, pitch: Math.min(89, pitch) };
+}
+
+/**
+ * A turn the app is making to the followed object: where the view was when
+ * it began, when that was, and how long it takes.
+ *
+ * The app makes the turn itself, a step every animation frame. (Asked for
+ * the new direction in one call, Street View turns there over most of a
+ * second while reporting from the start that it's there already: anything
+ * drawn over the view meanwhile is drawn where the picture isn't yet, and
+ * the sky map's looks are of a picture still on its way.) Stepped, the
+ * direction the viewer reports is where the picture is, so the paths and
+ * the chart stay on throughout.
+ *
+ * It eases out of the start and into the end. A drag takes over at once
+ * (taking hold of the view lets go of the object); a second press turns
+ * from wherever this one has got to; and as the time plays the turn heads
+ * for wherever the object is by then.
+ */
+let turn: { heading: number; pitch: number; start: number; ms: number } | null = null;
+let turnFrame = 0;
+/** A turn takes this long for a small one, up to this long for half-way round. */
+const TURN_MIN_MS = 250;
+const TURN_MAX_MS = 700;
+
+function turnToFollowed(): void {
+  const to = followTarget();
+  if (!pano || !to) return;
+  const pov = pano.getPov();
+  const across = ((to.heading - pov.heading + 540) % 360) - 180;
+  const apart = Math.hypot(across * Math.cos((pov.pitch * Math.PI) / 180), to.pitch - pov.pitch);
+  // (Next to no way to go, or a visitor who has asked for less motion: just go there.)
+  if (apart < 0.5 || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    turn = null;
+    pano.setPov(to);
+    return;
+  }
+  turn = { heading: pov.heading, pitch: pov.pitch, start: performance.now(), ms: turnMs(apart) };
+  if (!turnFrame) turnFrame = requestAnimationFrame(stepTurn);
+}
+
+/** How long the app takes over a turn of so many degrees. */
+function turnMs(degrees: number): number {
+  return TURN_MIN_MS + (TURN_MAX_MS - TURN_MIN_MS) * Math.min(1, degrees / 180);
+}
+
+function stepTurn(now: number): void {
+  turnFrame = 0;
+  const to = followTarget();
+  if (!turn || !pano || !to) {
+    turn = null;
+    return;
+  }
+  const t = Math.max(0, Math.min(1, (now - turn.start) / turn.ms));
+  const eased = easeInOut(t);
+  const across = ((to.heading - turn.heading + 540) % 360) - 180;
+  pano.setPov({ heading: turn.heading + across * eased, pitch: turn.pitch + (to.pitch - turn.pitch) * eased });
+  if (t >= 1) turn = null;
+  else turnFrame = requestAnimationFrame(stepTurn);
 }
 /** While following: how far above the view's bottom edge the horizon is kept, and how far below its top the object, as fractions of the view's height. */
 const FOLLOW_HORIZON_MARGIN = 0.15;
 const FOLLOW_TOP_MARGIN = 0.12;
+/** A view this many degrees tall or more is framed by the horizon; one this many or fewer is centred on the object (see followTarget). */
+const FOLLOW_CENTRE_FROM = 55;
+const FOLLOW_CENTRE_BY = 35;
 
 /** The noon-to-noon window holding the current time. */
 function currentWindow(): { start: Date; end: Date } {
@@ -238,7 +328,40 @@ function renderInfoPanel(): void {
     },
     onScrubEnd: stopEdgeRun,
     onJump: jumpTo,
-  });
+  }, openTimes);
+}
+
+/**
+ * When tonight each object is in open sky from here, by the sky map
+ * (roofline.ts): null where the sky map isn't on. Worked out again when the
+ * night changes, and a little after the sky map does (it changes at every
+ * look, and the chart's rows are rebuilt only if what it says of the
+ * objects has changed).
+ */
+let openTimes: Map<BodyId, OpenSky> | null = null;
+let openKey = '';
+let openTimer = 0;
+/** How long after the sky map changes the objects' times are worked out again. */
+const OPEN_SKY_SETTLE_MS = 700;
+
+function refreshOpenSky(redraw: boolean): void {
+  const sky = skyMap;
+  const data = night;
+  openTimes = sky && data ? new Map([...data.bodies].map(([id, summary]) => [id, openSky(summary, data.sun, data.twilight, sky)])) : null;
+  const key = openSkyKey(openTimes);
+  if (key === openKey) return;
+  openKey = key;
+  if (redraw) renderInfoPanel();
+}
+
+function skyMapChanged(): void {
+  requestRender();
+  if (!openTimer) {
+    openTimer = window.setTimeout(() => {
+      openTimer = 0;
+      refreshOpenSky(true);
+    }, OPEN_SKY_SETTLE_MS);
+  }
 }
 
 // The chart lays its labels out by its width, so it's redrawn when that
@@ -262,13 +385,124 @@ function toggleBody(id: BodyId): void {
   writeState(state);
 }
 
-/** Goes straight to a moment: a sunset, a rise, a transit (pressed on the slider or the chart). */
-function jumpTo(t: Date): void {
+/**
+ * Goes to a moment: a sunset, a rise, a transit, a time at the skyline
+ * (pressed on the slider or the chart), or now; `id` is the object whose
+ * moment it is, if it's one's. If it's within a day or so,
+ * the time runs there quickly, so the sky is seen to turn to it and not to
+ * blink from one place to another; further off, or for a visitor who has
+ * asked for less motion, it goes straight there.
+ */
+function jumpTo(t: Date, id?: BodyId): void {
   pauseForScrub();
-  setTime(t);
+  // A moment of an object's own (its rise, its transit, a time at the skyline): the view goes to the object and stays on
+  // it, as when its name is pressed or its plot dragged.
+  if (id) {
+    setCompass(false);
+    following = id;
+  }
+  const from = state.time.getTime();
+  const to = t.getTime();
+  const apart = Math.abs(to - from);
+  const win = currentWindow();
+  const sameNight = to >= win.start.getTime() && to < win.end.getTime();
+  // Where the view will face once it's there: on the object as it is at that moment. (Known only within the night
+  // that's worked out.)
+  const facing = id && sameNight ? followTarget(to) : null;
+  if (apart < 60000 || apart > GLIDE_WITHIN_MS || (id && !facing) || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // Straight to the time; and to the object by the app's ordinary turn, which has only the one thing to do then.
+    if (id) turnToFollowed();
+    setTime(t);
+    return;
+  }
+  // One motion for the two: the time runs and the view turns by the same clock, each a share of its own way, and they
+  // arrive together. The view goes straight from where it is to where the object will be; it doesn't chase the object
+  // across the sky as the time runs (that, and a turn with a clock of its own, pulled against each other).
+  let ms = GLIDE_MIN_MS + (GLIDE_MAX_MS - GLIDE_MIN_MS) * Math.min(1, apart / (12 * 3600000));
+  let view: NonNullable<typeof glide>['view'] = null;
+  if (facing && id && pano) {
+    const pov = pano.getPov();
+    const across = ((facing.heading - pov.heading + 540) % 360) - 180;
+    const turned = Math.hypot(across * Math.cos((pov.pitch * Math.PI) / 180), facing.pitch - pov.pitch);
+    ms = Math.max(ms, turnMs(turned));
+    view = { id, heading: pov.heading, pitch: pov.pitch, across, up: facing.pitch - pov.pitch };
+    // (Any turn of the app's own that was under way is this one's now.)
+    turn = null;
+  }
+  // (Pressed again part-way: it heads for the new moment from wherever it has got to.)
+  glide = { from, to, start: performance.now(), ms, view };
+  if (!glideFrame) glideFrame = requestAnimationFrame(stepGlide);
 }
 
+/**
+ * A run to a moment that was pressed (see jumpTo): the time, from when to
+ * when, and how long it takes; and with it, for a moment of an object's own,
+ * the view: where it started, and how far round and up it has to go to face
+ * the object as it will be then.
+ */
+let glide: { from: number; to: number; start: number; ms: number; view: { id: BodyId; heading: number; pitch: number; across: number; up: number } | null } | null = null;
+let glideFrame = 0;
+/** A moment further off than this is gone to at once. */
+const GLIDE_WITHIN_MS = 36 * 3600000;
+/** The run takes this long for a moment close by, up to this long for one half a day off or more. */
+const GLIDE_MIN_MS = 250;
+const GLIDE_MAX_MS = 600;
+
+function stepGlide(now: number): void {
+  glideFrame = 0;
+  if (!glide) return;
+  const k = Math.max(0, Math.min(1, (now - glide.start) / glide.ms));
+  if (k >= 1) {
+    const to = glide.to;
+    glide = null;
+    setTime(new Date(to));
+    return;
+  }
+  // (Eased like the view's own turns, and each frame of it is a frame of the time running, as in playback.)
+  const eased = easeInOut(k);
+  // (Taking hold of the view, or following something else, lets go of the turn; the time runs on.)
+  if (glide.view && following !== glide.view.id) glide.view = null;
+  tickTime(glide.from + (glide.to - glide.from) * eased, now);
+  if (glide?.view && pano) pano.setPov({ heading: glide.view.heading + glide.view.across * eased, pitch: glide.view.pitch + glide.view.up * eased });
+  glideFrame = requestAnimationFrame(stepGlide);
+}
+
+/** Out of the start and into the end, for a share 0 to 1 of the way: what the app's own motions are eased by. */
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/**
+ * One frame of the time being run, to `t` (ms): by playback, by the slider
+ * held against an end, or by a run to a pressed moment. The slider, the
+ * chart's time line, the sky and the view (if it's following an object) go
+ * with it; the chart's rows are brought up to date only a few times a
+ * second (every frame is wasteful); and a night run into is worked out.
+ */
+function tickTime(t: number, now: number): void {
+  state.time = new Date(t);
+  const win = currentWindow();
+  if (t < win.start.getTime() || t >= win.end.getTime()) {
+    recompute(); // a new night
+  } else {
+    syncTimeControls();
+    if (now - tickInfoAt > 250) {
+      renderInfoPanel();
+      tickInfoAt = now;
+    }
+    requestRender();
+  }
+  follow();
+}
+let tickInfoAt = 0;
+
 function setTime(t: Date): void {
+  // (Any other change of the time takes over from a run that's under way.)
+  if (glide) {
+    glide = null;
+    cancelAnimationFrame(glideFrame);
+    glideFrame = 0;
+  }
   state.time = t;
   recompute();
   follow();
@@ -280,10 +514,58 @@ function setTime(t: Date): void {
 let frame = 0;
 function requestRender(): void {
   if (frame) return;
-  frame = requestAnimationFrame(() => {
+  frame = requestAnimationFrame((now) => {
     frame = 0;
-    render();
+    render(now);
   });
+}
+
+// The chart of the sky drawn over the view, and what it's drawn from: all of
+// it is fetched only where the chart is switched on (see the end of this file).
+/** The sky map: where the sky is in the panorama on screen (sky/index.ts). */
+let skyMap: SkyMap | null = null;
+/** The chart's layer (skychart.ts), and how it looks. */
+let chart: SkyChart | null = null;
+/** The stars (stars.ts): the code that places them, and the catalogue itself. */
+let stars: typeof import('./stars') | null = null;
+let catalogue: Catalogue | null = null;
+let chartLook: typeof import('./skychart').CHART_LOOK | null = null;/** The last frame the chart was drawn for (for checking it by script). */
+let chartFrame: ChartFrame | null = null;
+/** Where the stars are, as last worked out: for which time and place. */
+let starsAt: { key: string; rotation: Float32Array } | null = null;
+
+/** The rotation from among the stars to the sky, for the chosen time at the place shown (stars.ts). */
+function starsRotation(): Float32Array | null {
+  if (!stars || !catalogue || state.lat === null || state.lng === null) return null;
+  const key = `${state.time.getTime()},${state.lat},${state.lng}`;
+  if (starsAt?.key !== key) starsAt = { key, rotation: stars.skyRotation(state.time, state.lat, state.lng) };
+  return starsAt.rotation;
+}
+
+/**
+ * How bright the sky is at the place shown, from artificial light
+ * (skyglow.ts): it sets how faint a star shows there, unless the visitor has
+ * switched that off in the settings (kept in this browser).
+ */
+let skyGlow: typeof import('./skyglow') | null = null;
+let skyGlowMap: import('./skyglow').SkyGlow | null = null;
+const SKY_GLOW_KEY = 'horizon.skyglow';
+let skyGlowOn = true;
+try {
+  skyGlowOn = localStorage.getItem(SKY_GLOW_KEY) !== '0';
+} catch {
+  // Storage unavailable: it's on.
+}
+let siteAt: { key: string; faintest: number } | null = null;
+
+/** The faintest star seen by eye from the place shown, as a magnitude; the catalogue's faintest where that isn't known, or isn't wanted. */
+function siteFaintest(): number {
+  if (!skyGlow) return 6.5;
+  if (!skyGlowOn || !skyGlowMap || state.lat === null || state.lng === null) return skyGlow.DARK_SKY;
+  // (The picture it's read from is a tenth of a degree to the cell.)
+  const key = `${state.lat.toFixed(2)},${state.lng.toFixed(2)}`;
+  if (siteAt?.key !== key) siteAt = { key, faintest: skyGlow.faintestFrom(skyGlowMap, state.lat, state.lng) };
+  return siteAt.faintest;
 }
 
 function camera(): Camera | null {
@@ -300,26 +582,46 @@ function camera(): Camera | null {
   };
 }
 
-function render(): void {
+function render(now = performance.now()): void {
   const cam = camera();
   els.overlay.hidden = !cam;
   if (!cam) return;
-  overlay.render({ cam, data: night, time: state.time.getTime(), bodies: state.bodies, tz });
+  const time = state.time.getTime();
+  let names = null;
+  if (chart && chartLook) {
+    // The chart goes by how far down the Sun is at the chosen time: its colour, how solid it is, and how faint a star shows.
+    const sun = night && interpolate(night.sun, time);
+    const sunAlt = sun ? sun.alt : 90;
+    const rotation = starsRotation();
+    chartFrame = {
+      cam,
+      now,
+      sunAlt,
+      sunAz: sun ? sun.az : 0,
+      faintestDark: stars ? stars.faintestByDark(sunAlt) : -9,
+      faintestMost: stars ? stars.faintestInView(cam.hfov, siteFaintest()) : -9,
+      rotation,
+    };
+    // (It asks for another frame while anything of it is still easing, and otherwise the page is idle.)
+    if (chart.draw(chartFrame)) requestRender();
+    // (The names come in with the open sky's backdrop.)
+    const skyIn = duskShare(sunAlt, chartLook.duskSky);
+    if (stars && catalogue && rotation && skyIn > 0 && !chartLook.off && !chartLook.flat) {
+      names = { labels: stars.labelsInView(catalogue, rotation, cam), faintest: stars.faintestShown(sunAlt, cam.hfov, siteFaintest()), night: skyIn, strength: chart.starStrengths, lookedBelow: chart.lookingBelow };
+    }
+  }
+  overlay.render({ cam, data: night, time, bodies: state.bodies, tz, sky: skyMap, names });
 }
 
 function lookAtBody(id: BodyId): void {
   const pos = night && interpolate(night.bodies.get(id)?.samples ?? [], state.time.getTime());
   if (!pano || !pos) return;
   setSheetOpen(false);
-  els.overlay.classList.add('turning');
   // Turn to it, framed as it will be while followed, and stay locked onto it.
   setCompass(false);
   following = id;
-  follow();
-  window.clearTimeout(turnTimer);
-  turnTimer = window.setTimeout(() => els.overlay.classList.remove('turning'), 700);
+  turnToFollowed();
 }
-let turnTimer: number | undefined;
 
 // ---------- location ----------
 
@@ -627,6 +929,9 @@ async function initMaps(key: string | undefined): Promise<void> {
   els.search.append(ac);
   ac.addEventListener('gmp-select', async (ev) => {
     const place = (ev as google.maps.places.PlacePredictionSelectEvent).placePrediction.toPlace();
+    // The name isn't used, but asking for it is what makes the search cheaper:
+    // Google then bills the lookup alone (2.5c), where a location-only lookup
+    // is billed per keystroke as well (up to 12 x 0.28c, plus 0.5c).
     await place.fetchFields({ fields: ['location', 'displayName'] });
     if (!place.location) return;
     setSheetOpen(false);
@@ -638,6 +943,16 @@ async function initMaps(key: string | undefined): Promise<void> {
     ac.value = ''; // the previous search no longer describes where we are
     void goToLatLng(e.latLng.toJSON(), 60);
   });
+
+  showPano = async (id) => {
+    const ok = await goTo({ pano: id });
+    if (ok) {
+      ac.value = '';
+      resetLookingAround();
+      setLocated(false);
+    }
+    return ok;
+  };
 
   els.locate.addEventListener('click', () => locate(true));
   // The same, offered in the landing hint for anyone who dismissed the first prompt.
@@ -725,25 +1040,12 @@ function pauseForScrub(): void {
 const EDGE_SPEED = 6 * 3600;
 /** How long the slider must sit at an end before time starts running. */
 const EDGE_DWELL_MS = 350;
-const edge = { dir: 0 as -1 | 0 | 1, timer: 0, frame: 0, last: 0, lastInfo: 0 };
+const edge = { dir: 0 as -1 | 0 | 1, timer: 0, frame: 0, last: 0 };
 
 function edgeTick(now: number): void {
   const t = state.time.getTime() + edge.dir * (now - edge.last) * EDGE_SPEED;
   edge.last = now;
-  state.time = new Date(t);
-  const win = currentWindow();
-  if (t < win.start.getTime() || t >= win.end.getTime()) {
-    recompute(); // a new night
-  } else {
-    syncTimeControls();
-    // As in playback: rebuilding the info panel every frame is wasteful.
-    if (now - edge.lastInfo > 250) {
-      renderInfoPanel();
-      edge.lastInfo = now;
-    }
-    requestRender();
-  }
-  follow();
+  tickTime(t, now);
   edge.frame = requestAnimationFrame(edgeTick);
 }
 
@@ -815,7 +1117,7 @@ function dragTo(fraction: number): void {
   setTime(new Date(dir > 0 ? win.end.getTime() - SLIDER_STEP_MS : win.start.getTime()));
   edge.dir = dir;
   edge.timer = window.setTimeout(() => {
-    edge.last = edge.lastInfo = performance.now();
+    edge.last = performance.now();
     edge.frame = requestAnimationFrame(edgeTick);
   }, EDGE_DWELL_MS);
 }
@@ -1015,8 +1317,9 @@ function setPlaying(on: boolean): void {
   cancelAnimationFrame(playing);
   playing = 0;
   if (!on) return;
+  // (Playing takes over from a run to a pressed moment, from wherever it has got to.)
+  glide = null;
   let last = performance.now();
-  let lastInfo = 0;
   const tick = (now: number) => {
     // One hour of sky per second of playback.
     const dt = (now - last) * 3600;
@@ -1024,15 +1327,7 @@ function setPlaying(on: boolean): void {
     const win = currentWindow();
     let t = state.time.getTime() + dt;
     if (t > win.end.getTime() - 60000) t = win.start.getTime();
-    state.time = new Date(t);
-    syncTimeControls();
-    // Rebuilding the cards every frame is wasteful and makes them unclickable.
-    if (now - lastInfo > 250) {
-      renderInfoPanel();
-      lastInfo = now;
-    }
-    follow();
-    requestRender();
+    tickTime(t, now);
     playing = requestAnimationFrame(tick);
   };
   playing = requestAnimationFrame(tick);
@@ -1331,6 +1626,109 @@ try {
   if (localStorage.getItem(PANEL_KEY) === '1') setPanelCollapsed(true);
 } catch {
   // As above.
+}
+
+// The night sky over the view: a chart of the whole sky (skychart.ts), drawn
+// at full strength where the sky map (sky/index.ts) finds open sky in the
+// panorama, and fainter over buildings and trees; with the stars (stars.ts).
+// It's on wherever the browser can run the sky map's model on the graphics
+// card (on the processor the model holds the page up at every look), unless
+// switched off in the settings; the switch is kept in this browser, not in
+// the link: it's about what the visitor's device can do. Nothing of it
+// shows until the model is ready, and nothing ever does if it can't be made
+// ready (its file not downloaded, the graphics card not taking it): the app
+// is then as it is without it, and says nothing of it.
+{
+  const row = els.skyChart.closest<HTMLElement>('.sky-chart-setting');
+  if (row) row.hidden = !skyOffered;
+  els.skyChart.checked = skyEnabled();
+  els.skyChart.addEventListener('change', () => {
+    // The viewer's canvas has to be made with the sky map already on (sky/preserve.ts): so the page loads again, as it was.
+    setSkyEnabled(els.skyChart.checked);
+    flushState(state);
+    location.reload();
+  });
+
+  const host = {
+    pano: els.pano,
+    view: els.pano.parentElement!,
+    camera,
+    panoId: () => pano?.getPano() ?? '',
+    showPano: (id: string) => showPano(id),
+    links: () => (pano?.getLinks() ?? []).flatMap((link) => (link?.pano ? [link.pano] : [])),
+  };
+  // The sky map, once its model is ready; null where it's off, or the model can't be made ready.
+  const sky = skyEnabled()
+    ? import('./sky')
+        .then(async ({ startSky }) => {
+          const map = startSky(host);
+          await map.ready;
+          return map;
+        })
+        .catch((err) => {
+          // TODO: degrade, don't give up. Without the model (this, or a browser with no WebGPU, where it isn't
+          // tried at all) the chart could still be drawn, at one strength everywhere: only what needs the sky
+          // map would go (open sky at full strength and buildings darkened, paths dimmed behind things, the
+          // times at the skyline). See "The night sky without the model" in FEATURES.md.
+          console.warn('[sky] the night sky is left off:', err);
+          return null;
+        })
+    : Promise.resolve(null);
+  // The chart and its stars are fetched meanwhile, and put on screen only once the sky map is there.
+  if (skyEnabled()) {
+    const charting = import('./skychart');
+    const starred = import('./stars').then(async (module) => ({ module, loaded: await module.loadCatalogue() }));
+    // (The stars are drawn without it until it's there, and if it never is: as under a dark sky.)
+    const glowing = import('./skyglow').then(async (module) => ({ module, map: await module.loadSkyGlow() }));
+    for (const fetched of [charting, starred, glowing]) fetched.catch(() => {});
+    void sky.then(async (map) => {
+      if (!map) return;
+      const module = await charting;
+      chartLook = module.CHART_LOOK;
+      chart = module.SkyChart.create(els.overlay, els.pano);
+      skyMap = map;
+      chart?.setSky(map);
+      map.onChange(skyMapChanged);
+      skyMapChanged();
+      requestRender();
+      void starred.then(({ module: starsModule, loaded }) => {
+        stars = starsModule;
+        catalogue = loaded;
+        chart?.setCatalogue(loaded);
+        requestRender();
+      });
+      void glowing.then(({ module: glowModule, map: glowMap }) => {
+        skyGlow = glowModule;
+        skyGlowMap = glowMap;
+        requestRender();
+      });
+    }).catch((err) => console.error(err));
+  }
+  els.skyGlow.checked = skyGlowOn;
+  els.skyGlow.addEventListener('change', () => {
+    skyGlowOn = els.skyGlow.checked;
+    try {
+      localStorage.setItem(SKY_GLOW_KEY, skyGlowOn ? '1' : '0');
+    } catch {
+      // Storage unavailable: the choice just isn't remembered.
+    }
+    requestRender();
+  });
+  if (import.meta.env.DEV) {
+    // For the console: the faintest star seen by eye from the place shown, and the level it's read from.
+    Object.assign(window, {
+      __skyglow: () => ({ on: skyGlowOn, faintest: siteFaintest(), level: skyGlow && skyGlowMap && state.lat !== null && state.lng !== null ? skyGlow.levelAt(skyGlowMap, state.lat, state.lng) : null }),
+    });
+  }
+  if (import.meta.env.DEV) {
+    void Promise.all([sky, import('./sky/dev/panel')]).then(([map, { startSkyPanel }]) =>
+      startSkyPanel(host, map, {
+        look: () => chartLook,
+        redraw: requestRender,
+        readWeight: () => (chart && chartFrame ? { ...chart.readWeight({ ...chartFrame, now: performance.now() }), cam: chartFrame.cam } : null),
+      }),
+    );
+  }
 }
 
 // ---------- start ----------

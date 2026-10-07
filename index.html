@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content="See where the planets will be over your skyline." />
-    <title>Horizon</title>
+    <title>Clear Skies</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%23ffa24a'/%3E%3Cellipse cx='16' cy='16' rx='14' ry='4' fill='none' stroke='%23d8d86a' stroke-width='2' transform='rotate(-20 16 16)'/%3E%3C/svg%3E" />
   </head>
-  <body class="landing">
+  <body class="landing map-hidden">
     <div id="app">
       <main id="view" aria-label="Street View with planet overlay">
         <div id="pano"></div>
@@ -38,7 +38,7 @@
           </button>
         </div>
         <div id="map" aria-label="Map"></div>
-        <button id="map-toggle" type="button" class="icon-btn" aria-label="Hide map" aria-expanded="true">
+        <button id="map-toggle" type="button" class="icon-btn" aria-label="Show map" aria-expanded="false">
           <svg class="i-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg>
           <!-- A generic folded map, shown while collapsed (not Google's Pegman, which is branded artwork). -->
           <svg class="i-map" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5L9 4zM9 4v13.5M15 6.5V20" /></svg>
@@ -50,7 +50,7 @@
           <span></span>
         </button>
         <header class="panel-head">
-          <h1>Horizon</h1>
+          <h1><a href="/">Clear Skies</a></h1>
           <div class="head-actions">
             <button id="info-btn" type="button" class="icon-btn line-icon" aria-label="About and shortcuts" title="About and shortcuts" aria-haspopup="dialog">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.01" /></svg>
@@ -132,7 +132,7 @@
 
       <dialog id="info-dialog" aria-labelledby="info-title">
         <header class="dialog-head">
-          <h2 id="info-title">Horizon</h2>
+          <h2 id="info-title">Clear Skies</h2>
           <button id="info-close" type="button" class="icon-btn line-icon" aria-label="Close">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
@@ -171,8 +171,26 @@
             Naked-eye objects only
           </label>
           <p class="muted twilight-note">
-            Uranus and Neptune need binoculars or a telescope. While this is on they're listed when visible, but stay off unless you switch them on yourself.
+            Uranus and Neptune stay off unless you switch them on.
           </p>
+          <!-- Shown, and on, only where the browser can run the sky-finding
+               model on the graphics card (main.ts). Switching it reloads the page. -->
+          <div class="sky-chart-setting" hidden>
+            <label class="setting-check">
+              <input id="sky-chart" type="checkbox" />
+              Night sky over the view
+            </label>
+            <p class="muted twilight-note">
+              Stars and constellations after sunset, dimmed behind buildings and trees. Reloads the page.
+            </p>
+            <label class="setting-check">
+              <input id="sky-glow" type="checkbox" checked />
+              Stars as seen from this place
+            </label>
+            <p class="muted twilight-note">
+              Hides stars too faint for the place's light pollution.
+            </p>
+          </div>
         </section>
 
         <section class="dialog-section shortcuts" aria-labelledby="keys-h">
@@ -182,6 +200,24 @@
             <div><dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Hour later / earlier</dd></div>
             <div><dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>Older / newer Street View imagery</dd></div>
           </dl>
+        </section>
+
+        <!-- The same list as third_party/README.md: keep the two together. -->
+        <section class="dialog-section credits" aria-labelledby="credits-h">
+          <details>
+          <summary><h3 id="credits-h">Credits and Licenses</h3></summary>
+          <ul class="muted">
+            <li>Stars: <a href="https://www.astronexus.com/projects/hyg">HYG database</a>, David Nash (CC BY-SA 4.0)</li>
+            <li>Constellation figures: <a href="https://doi.org/10.5281/zenodo.10397192">ConstellationLines</a>, Marc van der Sluys (CC BY 4.0)</li>
+            <li>Messier, NGC and IC objects: <a href="https://github.com/mattiaverga/OpenNGC">OpenNGC</a>, Mattia Verga (CC BY-SA 4.0)</li>
+            <li>Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/">Light Pollution Atlas 2025</a>, © David J. Lorenz</li>
+            <li>Sky-finding model: <a href="https://github.com/PaddlePaddle/PaddleSeg">PP-MobileSeg</a>, PaddleSeg authors, trained on ADE20K (Apache 2.0)</li>
+            <li>Model runtime: <a href="https://ai.google.dev/edge/litert/web">LiteRT.js</a>, Google (Apache 2.0)</li>
+            <li>Positions: <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a>, Don Cross (MIT)</li>
+            <li>Also: <a href="https://github.com/googlemaps/js-api-loader">js-api-loader</a> and <a href="https://github.com/naturalatlas/geomagnetism">geomagnetism</a> (Apache 2.0), <a href="https://github.com/darkskyapp/tz-lookup-oss">tz-lookup</a> (CC0)</li>
+            <li>Map and Street View imagery: Google</li>
+          </ul>
+          </details>
         </section>
       </dialog>
 

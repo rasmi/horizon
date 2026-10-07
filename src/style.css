@@ -220,7 +220,9 @@ body.map-hidden:not(.landing) #map-wrap {
   backdrop-filter: blur(6px);
 }
 
-body.map-hidden #map {
+/* (Not while choosing a spot: the map is the whole view then, and the card
+   starts out collapsed for when Street View takes over.) */
+body.map-hidden:not(.landing) #map {
   visibility: hidden;
 }
 
@@ -853,9 +855,40 @@ kbd {
   accent-color: var(--accent);
 }
 
+.sky-chart-setting[hidden] {
+  display: none;
+}
+
 .dialog-section .twilight-note {
   margin: 6px 0 0;
   font-size: 12px;
+}
+
+/* The app's name, at the head of the panel, is a link to the app's front page: it reads as the name, not as a link. */
+.panel-head h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.panel-head h1 a:hover {
+  text-decoration: underline;
+}
+
+/* Whose work the app uses, at the foot of the About panel: folded away until asked for. */
+.credits summary {
+  cursor: pointer;
+}
+
+.credits summary h3 {
+  display: inline;
+  margin: 0;
+}
+
+.credits ul {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .dot {
@@ -1049,6 +1082,27 @@ body.scrubbing {
   opacity: 0.85;
 }
 
+/* By the sky map, where it's on: the part of a plot when the object is
+   behind a building or a tree is dimmed, and the part when it's where the
+   sky hasn't been looked at yet, dimmed a little. */
+.tl-behind {
+  fill: var(--panel-solid);
+  opacity: 0.66;
+}
+
+.tl-unseen {
+  fill: var(--panel-solid);
+  opacity: 0.3;
+}
+
+/* An open row: when the object is clear of the skyline, in words. */
+.tl-clear {
+  margin: 1px 0 2px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--muted);
+}
+
 .tl-line {
   fill: none;
   stroke: var(--c);
@@ -1094,6 +1148,60 @@ body.scrubbing {
   box-shadow:
     0 0 0 1.5px var(--panel-solid),
     0 0 0 2.5px var(--c);
+}
+
+/* An open row: a lane of its own under the plot for the skyline's eyes, one
+   at the time the object comes out from behind the skyline (open) and one at
+   the time it goes behind it (closed). Pressed, an eye jumps to its time.
+   (In the plot itself they sat on the transit's dot, on where the object is
+   now, and on each other.) */
+.tl-eyes {
+  position: relative;
+  /* (Wholly under the plot, and under where the altitude beside the "now"
+     dot hangs when it's dropped beneath it: nothing of the plot's reaches
+     in here.) */
+  height: 19px;
+  margin-top: 5px;
+}
+
+/* A tick at each one's true moment, as the labels below have. */
+.tl-eyes > .tl-mark {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 4px;
+  background: var(--c);
+  opacity: 0.8;
+}
+
+/* The eye beneath it: bare, in the object's colour, and moved sideways
+   only where it would touch its neighbour. The button round it is bigger
+   than it looks, for pressing. */
+.tl-eye {
+  position: absolute;
+  top: 3px;
+  width: 17px;
+  height: 16px;
+  margin-left: -8.5px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--c);
+  cursor: pointer;
+}
+
+.tl-eye .ev-icon {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  stroke-width: 1.3;
+}
+
+.tl-eye:hover {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 /* The dot and the peak beside it jump to the transit when pressed. */
@@ -1308,6 +1416,29 @@ body.scrubbing {
   cursor: pointer;
 }
 
+/* An unseen button over something written on the canvas that can be
+   pressed: an object's name along its path, one of its times (overlay.ts).
+   It takes the press, so Street View beneath doesn't. */
+.label-hit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.label-hit:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.label-hit[hidden] {
+  display: none;
+}
+
 .marker[hidden] {
   display: none;
 }
@@ -1381,10 +1512,20 @@ body.scrubbing {
   outline-offset: 3px;
 }
 
-/* Street View animates programmatic turns but reports the target POV at
-   once, so hide the overlay until the imagery catches up. */
-#overlay.turning {
-  opacity: 0;
+/* Up, and behind a building or a tree by the sky map: dimmed, as the stars
+   are there. It fades as it goes behind and comes out. */
+.marker {
+  transition: opacity 0.15s;
+}
+
+.marker.behind {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marker {
+    transition: none;
+  }
 }
 
 /* ---------- desktop: panel on the left, collapsible ---------- */

@@ -5,10 +5,12 @@ import {
   magnitude,
   type AltAz,
   type BodyId,
+  type Sample,
   type NightData,
   type NightSummary,
 } from './astro';
-import { edgeIndicator, lineLabelAnchor, project, type Camera, type LabelAnchor } from './projection';
+import { edgeIndicator, focalLength, lineLabelAnchor, project, type Camera, type LabelAnchor } from './projection';
+import type { Label } from './stars';
 import { formatClock, formatHour } from './time';
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -33,6 +35,22 @@ const LABEL_HEIGHT = 12;
 
 const LABEL_FONT = '600 11px system-ui, sans-serif';
 const COMPASS_FONT = '600 13px system-ui, sans-serif';
+
+// The chart's names (see drawNames).
+const NAME_FONT = '500 11px system-ui, sans-serif';
+const CONSTELLATION_FONT = '600 10px system-ui, sans-serif';
+const CONSTELLATION_COLOR = '#9db4ea';
+const OBJECT_COLOR = '#9fe0d0';
+/** A star is named if it's at least this bright, and a magnitude and a bit fainter for each halving of the view's width. */
+const STAR_NAMES_TO = 1.7;
+const STAR_NAMES_PER_ZOOM = 1.3;
+/** The same for Messier's objects and the rest. */
+const OBJECT_NAMES_TO = 4.1;
+const OBJECT_NAMES_PER_ZOOM = 2.2;
+/** The constellations are named in a view at least this many degrees wide: closer in, a name has no figure round it. */
+const CONSTELLATION_NAMES_FROM_HFOV = 34;
+/** Which names keep their place where two would overlap: stars, then objects, then constellations. */
+const rank = (l: Label) => (l.what === 'star' ? 0 : l.what === 'constellation' ? 2 : 1);
 
 interface Box {
   x0: number;
@@ -84,6 +102,8 @@ function slantedHitsBox(corners: Point[], box: Box, pad: number): boolean {
 /** A rise or set time and where it goes. */
 interface RiseSetLabel {
   text: string;
+  /** The moment itself, in ms. */
+  t: number;
   rising: boolean;
   /** The crossing happens in daylight. */
   faint: boolean;
@@ -137,12 +157,160 @@ function layoutRiseSet(labels: RiseSetLabel[], compass: Box[]): void {
   }
 }
 
+/** A time at the skyline: when a path comes out from behind it (`opens`) or goes behind it, and where its label goes. */
+interface SkyTimeLabel {
+  text: string;
+  /** The moment itself, in ms. */
+  t: number;
+  opens: boolean;
+  /** Its left edge and its top. */
+  x0: number;
+  top: number;
+  width: number;
+}
+/** The eye drawn before each is this wide. */
+const SKY_TIME_ICON_PX = 11.5;
+/** A stretch of a path, in the open or behind something, shorter than this on screen has no times: leaves, a pole, a chimney. */
+const SKY_TIME_MIN_STRETCH_PX = 36;
+/** One that would have to slide further than this from its crossing to be clear of other labels is left out. */
+const SKY_TIME_MAX_SLIDE_PX = 70;
+
+function skyTimeBox(l: SkyTimeLabel): Box {
+  return { x0: l.x0, y0: l.top, x1: l.x0 + l.width, y1: l.top + LABEL_HEIGHT };
+}
+
 export interface RenderInput {
   cam: Camera;
   data: NightData | null;
   time: number;
   bodies: BodyId[];
   tz: string;
+  /**
+   * The sky map, where it's on (sky/index.ts): how far a point of the sky is
+   * open sky, above nothing where it is. A path, its hour dots and a marker
+   * are then dimmed where they're behind a building or a tree, or in sky
+   * that hasn't been looked at yet.
+   */
+  sky?: { at(alt: number, az: number): number; known?(alt: number, az: number): boolean } | null;
+  /** The chart's names to write, where the chart is on (see ChartNames). */
+  names?: ChartNames | null;
+}
+
+/** What's needed to write the chart's names: the stars', the constellations' and the objects'. */
+export interface ChartNames {
+  /** Everything in view that has a name (stars.ts). */
+  labels: Label[];
+  /** The faintest star being shown, and how far it's night (0–1): names come out as their stars do. */
+  faintest: number;
+  night: number;
+  /** How strong the chart's stars are in open sky, over anything else, and below the horizon. */
+  strength: [open: number, other: number, below: number];
+  /**
+   * With the view turned down under the horizon, the chart draws what's
+   * below the horizon stronger, over most of the view (ChartLook.lookedBelow
+   * in skychart.ts): the stars' strength there; how far that's come on, 0
+   * to 1; and how far from the view's middle it's at its full strength, and
+   * gone, as the tangents of those angles. The names below the horizon go
+   * with their stars.
+   */
+  lookedBelow: { strength: number; open: number; full: number; none: number; zoomed: number; zoomedFull: number; zoomedNone: number; lines: number };
+}
+
+/** A path, an hour dot or a marker that's behind something is drawn this strong. */
+const BEHIND_ALPHA = 0.42;
+/** A path is asked whether it's in open sky at points this many degrees apart, or this many pixels where that's closer (a view zoomed in). */
+const BEHIND_STEP_DEG = 0.25;
+const BEHIND_STEP_PX = 2.5;
+/** And its strength at a point goes by this many pixels of it round the point, where that's less than BEHIND_STRETCH_DEG. */
+const BEHIND_STRETCH_PX = 10;
+/** Whether a point of a path is behind something goes by what most of this many degrees of the path round it is: through leaves it would flicker. */
+const BEHIND_STRETCH_DEG = 1;
+
+/** Where a line passes between open sky and behind something: the point, its time if the line's points have times, which way (`opens`: it comes out into the open), and the point just on the hidden side of it. */
+export interface SkyChange {
+  at: AltAz;
+  t?: number;
+  opens: boolean;
+  behind: AltAz;
+}
+
+/**
+ * Splits a line (points in order; `gap` between stretches) into what's in
+ * open sky and what's behind something, by the sky map: each point by what
+ * most of the BEHIND_STRETCH_DEG round it is.
+ */
+export function splitBySky(
+  points: AltAz[],
+  isGap: (p: AltAz) => boolean,
+  gapPoint: AltAz,
+  open: (alt: number, az: number) => boolean,
+  /**
+   * How finely to ask along the piece of the line between two of its
+   * points, and how much of the line round a point its strength goes by,
+   * both in degrees. They're sizes on the screen at heart (a couple of
+   * pixels, and a dozen), so a view that's zoomed in wants them smaller: at
+   * a degree, the line changed strength well off the sky map's edge there.
+   */
+  stepFor: (a: AltAz, b: AltAz) => number = () => BEHIND_STEP_DEG,
+  stretch = BEHIND_STRETCH_DEG,
+): { clear: AltAz[]; behind: AltAz[]; changes: SkyChange[] } {
+  const clear: AltAz[] = [];
+  const behind: AltAz[] = [];
+  const changes: SkyChange[] = [];
+  const timeOf = (p: AltAz) => (p as Partial<Sample>).t;
+  let start = 0;
+  while (start < points.length) {
+    while (start < points.length && isGap(points[start])) start++;
+    let end = start;
+    while (end < points.length && !isGap(points[end])) end++;
+    if (end - start >= 2) {
+      // The stretch, at points close enough together to find where it goes behind something.
+      const fine: AltAz[] = [points[start]];
+      const along: number[] = [0];
+      for (let i = start; i + 1 < end; i++) {
+        const a = points[i];
+        const b = points[i + 1];
+        const daz = ((b.az - a.az + 540) % 360) - 180;
+        const apart = Math.hypot(b.alt - a.alt, daz * Math.cos((a.alt * Math.PI) / 180));
+        const pieces = Math.max(1, Math.ceil(apart / stepFor(a, b)));
+        const ta = timeOf(a);
+        const tb = timeOf(b);
+        for (let k = 1; k <= pieces; k++) {
+          const between: AltAz & { t?: number } = { alt: a.alt + ((b.alt - a.alt) * k) / pieces, az: (a.az + (daz * k) / pieces + 360) % 360 };
+          // (Where the line's points have a time, so do those between them: for saying when it goes behind something.)
+          if (ta !== undefined && tb !== undefined) between.t = ta + ((tb - ta) * k) / pieces;
+          fine.push(k === pieces ? b : between);
+          along.push(along[along.length - 1] + apart / pieces);
+        }
+      }
+      const asked = fine.map((p) => open(p.alt, p.az));
+      // Each point goes by how much of the stretch round it is open: mostly open, it's clear; mostly not, it's behind;
+      // and in between it stays as the point before it was. So a wire doesn't dim a path, and scraps of sky through
+      // leaves don't light it up.
+      const inOpen: boolean[] = [];
+      for (let i = 0, from = 0, to = 0; i < fine.length; i++) {
+        while (along[i] - along[from] > stretch / 2) from++;
+        while (to + 1 < fine.length && along[to + 1] - along[i] <= stretch / 2) to++;
+        let count = 0;
+        for (let k = from; k <= to; k++) if (asked[k]) count++;
+        const share = count / (to - from + 1);
+        inOpen.push(share > 0.55 ? true : share < 0.45 ? false : i > 0 ? inOpen[i - 1] : asked[i]);
+      }
+      for (let i = 0; i < fine.length; i++) {
+        const list = inOpen[i] ? clear : behind;
+        list.push(fine[i]);
+        if (i + 1 < fine.length && inOpen[i + 1] !== inOpen[i]) {
+          // (Both get the point where it changes, so they meet with no hole.)
+          list.push(fine[i + 1], gapPoint);
+          changes.push({ at: fine[i + 1], t: timeOf(fine[i + 1]), opens: inOpen[i + 1], behind: inOpen[i] ? fine[i + 1] : fine[i] });
+        }
+      }
+      clear.push(gapPoint);
+      behind.push(gapPoint);
+    }
+    start = end;
+  }
+  return { clear, behind, changes };
 }
 
 interface MarkerEls {
@@ -156,10 +324,27 @@ export class Overlay {
   private layer: HTMLDivElement;
   private markers = new Map<BodyId, MarkerEls>();
   private hourLabels = new Map<string, string>();
+  /** The sky map for the frame being drawn, if it's on. */
+  private sky: RenderInput['sky'] = null;
+  /** The skyline times of the paths drawn so far this frame, each with its path's colour (see skyTimeLabels). */
+  private skyTimes: { label: SkyTimeLabel; color: string }[] = [];
+
+  /**
+   * What's written on the canvas that can be pressed, this frame: an
+   * object's name along its path (turns to it and follows it, as its marker
+   * does), and its times above the horizon (go to that time, following the
+   * object). The canvas itself takes no presses, so each has an unseen
+   * button laid over it in the markers' layer: a press there is the
+   * object's, and doesn't reach Street View (where it would be a step along
+   * the street).
+   */
+  private hits: { box: Box; id: BodyId; t?: number; says: string }[] = [];
+  private hitEls: HTMLButtonElement[] = [];
 
   constructor(
     container: HTMLElement,
     private onSelect: (id: BodyId) => void,
+    private onJump: (t: number, id: BodyId) => void = () => {},
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'overlay-canvas';
@@ -170,7 +355,10 @@ export class Overlay {
     this.ctx = this.canvas.getContext('2d')!;
   }
 
-  render({ cam, data, time, bodies, tz }: RenderInput): void {
+  render({ cam, data, time, bodies, tz, sky = null, names = null }: RenderInput): void {
+    this.sky = sky;
+    this.skyTimes = [];
+    this.hits = [];
     const dpr = window.devicePixelRatio || 1;
     const w = Math.round(cam.width * dpr);
     const h = Math.round(cam.height * dpr);
@@ -182,6 +370,8 @@ export class Overlay {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cam.width, cam.height);
 
+    // (Under everything else: a path's own labels are written over a star's name.)
+    if (names) this.drawNames(cam, names);
     this.drawHorizon(cam);
     if (data) {
       // Rise/set labels are laid out first, since an object's own hour labels
@@ -196,11 +386,130 @@ export class Overlay {
       bodies.forEach((id, order) =>
         this.drawPath(cam, data, id, tz, order, time, riseSet.get(id) ?? [], riseSetBoxes),
       );
-      for (const id of bodies) this.drawRiseSet(riseSet.get(id) ?? [], BODY_COLOR[id]);
+      for (const id of bodies) {
+        this.drawRiseSet(riseSet.get(id) ?? [], BODY_COLOR[id]);
+        // (A rise time sits above the horizon, and can be pressed; a set time sits below it, among the street.)
+        for (const label of riseSet.get(id) ?? []) if (label.rising) this.hits.push({ box: riseSetBox(label), id, t: label.t, says: `Go to when ${id} rises, and follow it` });
+      }
+      this.drawSkyTimes();
     }
     // Last, so a compass letter stays readable over a set time that reaches it.
     this.drawCompass(cam);
     this.placeMarkers(cam, data, time, bodies);
+    this.placeHits();
+  }
+
+  /** Lays an unseen button over each thing on the canvas that can be pressed (see `hits`). */
+  private placeHits(): void {
+    this.hits.forEach((hit, i) => {
+      let el = this.hitEls[i];
+      if (!el) {
+        el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'label-hit';
+        el.addEventListener('click', () => {
+          const pressed = this.hits[i];
+          if (!pressed) return;
+          if (pressed.t === undefined) this.onSelect(pressed.id);
+          else this.onJump(pressed.t, pressed.id);
+        });
+        this.layer.append(el);
+        this.hitEls[i] = el;
+      }
+      const { box } = hit;
+      el.style.transform = `translate(${(box.x0 - 3).toFixed(1)}px, ${(box.y0 - 3).toFixed(1)}px)`;
+      el.style.width = `${(box.x1 - box.x0 + 6).toFixed(1)}px`;
+      el.style.height = `${(box.y1 - box.y0 + 6).toFixed(1)}px`;
+      if (el.title !== hit.says) {
+        el.title = hit.says;
+        el.setAttribute('aria-label', hit.says);
+      }
+      el.hidden = false;
+    });
+    for (let i = this.hits.length; i < this.hitEls.length; i++) this.hitEls[i].hidden = true;
+  }
+
+  /**
+   * The chart's names: the brightest stars', the constellations' and the
+   * objects' (each of those with a small ring where it is). More of them as
+   * the sky darkens and the view closes in; each as strong as the chart is
+   * where it stands, so dimmed behind a building like the star it names; and
+   * the less important left out where two would sit on each other.
+   */
+  private drawNames(cam: Camera, names: ChartNames): void {
+    const ctx = this.ctx;
+    const closer = Math.max(0, Math.log2(90 / cam.hfov));
+    const dark = Math.max(0, Math.min(1, (names.faintest - 2.5) / 2));
+    const wanted = names.labels
+      .filter((l) => {
+        if (l.what === 'star') return l.magnitude <= Math.min(names.faintest - 0.6, STAR_NAMES_TO + STAR_NAMES_PER_ZOOM * closer);
+        // (A constellation none of whose stars is showing isn't named: its lines aren't drawn either.)
+        if (l.what === 'constellation') return dark > 0 && cam.hfov >= CONSTELLATION_NAMES_FROM_HFOV && l.magnitude <= names.faintest;
+        return dark > 0 && l.magnitude <= OBJECT_NAMES_TO + OBJECT_NAMES_PER_ZOOM * closer;
+      })
+      // The brightest stars first, then the objects, then the constellations: what's placed first keeps its place.
+      .sort((a, b) => rank(a) - rank(b) || a.magnitude - b.magnitude);
+    const placed: Box[] = [];
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    for (const l of wanted) {
+      const open = this.sky ? this.sky.at(l.alt, l.az) > 0 : false;
+      // (Below the horizon, as the chart has it: stronger towards the middle of a view that's turned down under it.)
+      // (And over buildings, up to full strength there as the view is zoomed in a little.)
+      const { strength: lookedAt, open: lookedOpen, full, none, zoomed, zoomedFull, zoomedNone } = names.lookedBelow;
+      const out = Math.hypot(l.px - cam.width / 2, l.py - cam.height / 2) / focalLength(cam);
+      const through = (from: number, to: number) => {
+        const edge = Math.max(0, Math.min(1, (out - from) / (to - from)));
+        return 1 - edge * edge * (3 - 2 * edge);
+      };
+      const below = names.strength[2] + (lookedAt - names.strength[2]) * lookedOpen * through(full, none);
+      const behind = names.strength[1] + (1 - names.strength[1]) * zoomed * through(zoomedFull, zoomedNone);
+      // A constellation's name goes with its lines, not its stars: none below the horizon but through the porthole, and
+      // none over buildings in a view at its widest, coming in there (all across the view) as the lines do with the zoom.
+      const constellationBelow = lookedAt * lookedOpen * through(full, none);
+      const constellationBehind = names.strength[0] * names.lookedBelow.lines;
+      const strength =
+        l.what === 'constellation'
+          ? l.alt <= 0
+            ? constellationBelow
+            : open
+              ? names.strength[0]
+              : constellationBehind
+          : l.alt <= 0
+            ? below
+            : open
+              ? names.strength[0]
+              : behind;
+      const alpha = strength * names.night * (l.what === 'star' ? 0.9 : l.what === 'constellation' ? 0.6 * dark : 0.8 * dark);
+      if (alpha < 0.06) continue;
+      const constellation = l.what === 'constellation';
+      const text = constellation ? l.text.toUpperCase() : l.text;
+      ctx.font = constellation ? CONSTELLATION_FONT : NAME_FONT;
+      if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = constellation ? '1.5px' : '0px';
+      const width = ctx.measureText(text).width;
+      const x = constellation ? l.px - width / 2 : l.px + (l.what === 'star' ? 8 : 9);
+      const box = { x0: x, y0: l.py - 7, x1: x + width, y1: l.py + 7 };
+      if (placed.some((other) => overlaps(box, other))) continue;
+      placed.push(box);
+      ctx.globalAlpha = alpha;
+      if (l.what !== 'star' && !constellation) {
+        // A ring where the object is, a little bigger for one that's wide in the sky.
+        ctx.beginPath();
+        ctx.arc(l.px, l.py, Math.max(3.5, Math.min(14, (l.size / 60) * (cam.width / cam.hfov) * 0.5)), 0, Math.PI * 2);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = OBJECT_COLOR;
+        ctx.stroke();
+      }
+      ctx.textAlign = 'left';
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = 'rgba(4, 8, 20, 0.7)';
+      ctx.strokeText(text, x, l.py);
+      ctx.fillStyle = constellation ? CONSTELLATION_COLOR : l.what === 'star' ? '#e9eefc' : OBJECT_COLOR;
+      ctx.fillText(text, x, l.py);
+    }
+    if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '0px';
+    ctx.restore();
   }
 
   private drawHorizon(cam: Camera): void {
@@ -410,8 +719,41 @@ export class Overlay {
       this.drawChevron(cam, s[half], s[half + 1]);
     }
 
-    ctx.globalAlpha = 1;
-    strokeSolid(strong);
+    // The solid part, at full strength in open sky and dimmed where it's behind a building or a tree. (Dashed says "not
+    // up, or not dark"; dimmed says "up, and behind something".)
+    const sky = this.sky;
+    /** When this path comes out from behind the skyline and goes behind it, where those are on screen (see skyTimeLabels). */
+    let skyTimes: SkyTimeLabel[] = [];
+    if (sky) {
+      // (Asked every couple of pixels where the line is on screen, and its strength by what most of a dozen pixels of it
+      // is: so it changes at the sky map's edge at any zoom. Off screen, coarsely: nothing of it shows.)
+      const pxPerDeg = (focalLength(cam) * Math.PI) / 180;
+      const fine = Math.max(0.01, Math.min(BEHIND_STEP_DEG, BEHIND_STEP_PX / pxPerDeg));
+      const onScreen = (p: AltAz) => {
+        const at = project(p.alt, p.az, cam);
+        return at.z >= MIN_DEPTH && at.x > -cam.width / 2 && at.x < cam.width * 1.5 && at.y > -cam.height / 2 && at.y < cam.height * 1.5;
+      };
+      const { clear, behind, changes } = splitBySky(
+        solid,
+        (p) => p === gap,
+        gap,
+        (alt, az) => sky.at(alt, az) > 0,
+        (a, b) => (onScreen(a) || onScreen(b) ? fine : BEHIND_STEP_DEG),
+        Math.max(4 * fine, Math.min(BEHIND_STRETCH_DEG, BEHIND_STRETCH_PX / pxPerDeg)),
+      );
+      ctx.globalAlpha = BEHIND_ALPHA;
+      strokeSolid((i) => (i < behind.length ? behind[i] : null));
+      ctx.globalAlpha = 1;
+      strokeSolid((i) => (i < clear.length ? clear[i] : null));
+      skyTimes = this.skyTimeLabels(cam, changes, tz, [...riseSetBoxes, ...this.skyTimes.map((s) => skyTimeBox(s.label))]);
+      for (const label of skyTimes) {
+        this.skyTimes.push({ label, color });
+        this.hits.push({ box: skyTimeBox(label), id, t: label.t, says: `Go to when ${id} ${label.opens ? 'comes out from behind the skyline' : 'goes behind the skyline'}, and follow it` });
+      }
+    } else {
+      ctx.globalAlpha = 1;
+      strokeSolid(strong);
+    }
 
     // Hour ticks. The window starts at local noon and paths share its time
     // grid, so whole hours from the window start are whole local hours.
@@ -421,7 +763,7 @@ export class Overlay {
     // This object's rise/set times take precedence over its own hour labels:
     // where they'd overlap, the dot stays and the hour text is left out.
     // Zooming in spreads them apart, and both show again.
-    const reserved = riseSet.map(riseSetBox);
+    const reserved = [...riseSet.map(riseSetBox), ...skyTimes.map(skyTimeBox)];
     let lastLabel: { x: number; y: number } | null = null;
     // (Not on the fading ends: those hours belong to the day before and after.)
     for (let i = firstFull; i <= lastFull; i++) {
@@ -429,6 +771,8 @@ export class Overlay {
       if ((sample.t - data.start.getTime()) % HOUR !== 0 || !bold[i]) continue;
       const p = project(sample.alt, sample.az, cam);
       if (p.z < MIN_DEPTH || !p.visible) continue;
+      // (Dimmed with its stretch of the path, where that's behind something.)
+      ctx.globalAlpha = sky && sky.at(sample.alt, sample.az) <= 0 ? BEHIND_ALPHA : 1;
       ctx.beginPath();
       ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
       ctx.fillStyle = color;
@@ -445,9 +789,115 @@ export class Overlay {
       ctx.fillStyle = '#fff';
       ctx.fillText(text, p.x + 7, p.y);
       lastLabel = p;
+      // (Pressed, the hour and its dot go to that time, on this object.)
+      this.hits.push({ box, id, t: sample.t, says: `Go to ${text}, and follow ${id}` });
     }
+    ctx.globalAlpha = 1;
 
-    this.drawPathName(cam, id, order, solid, interpolate(summary.samples, time), riseSetBoxes);
+    this.drawPathName(cam, id, order, solid, interpolate(summary.samples, time), [...riseSetBoxes, ...this.skyTimes.map((s) => skyTimeBox(s.label))]);
+    ctx.restore();
+  }
+
+  /**
+   * The times a path comes out from behind the skyline (an open eye) and
+   * goes behind it (a closed one), by the sky map: each to the right of
+   * where the path crosses the sky map's edge, like a rise or set time at
+   * the horizon. Coming out sits just above the crossing, going behind just
+   * below. One that would sit on another label slides right, a little way;
+   * if that isn't enough it's left out.
+   *
+   * Not where the sky on the hidden side hasn't been looked at (that's the
+   * edge of what's known, not a skyline); and not for a stretch too short
+   * to read, as through leaves or past a pole.
+   */
+  private skyTimeLabels(cam: Camera, changes: SkyChange[], tz: string, taken: Box[]): SkyTimeLabel[] {
+    const sky = this.sky;
+    const ctx = this.ctx;
+    const at = changes.map((c) => project(c.at.alt, c.at.az, cam));
+    const out: SkyTimeLabel[] = [];
+    const placed = [...taken];
+    ctx.save();
+    ctx.font = LABEL_FONT;
+    for (let i = 0; i < changes.length; i++) {
+      const change = changes[i];
+      const p = at[i];
+      // (A change and the one after it close together on screen are the two ends of a short stretch: neither is said.)
+      const next = at[i + 1];
+      if (next && p.z >= MIN_DEPTH && next.z >= MIN_DEPTH && Math.hypot(next.x - p.x, next.y - p.y) < SKY_TIME_MIN_STRETCH_PX) {
+        i++;
+        continue;
+      }
+      if (change.t === undefined || p.z < MIN_DEPTH || !p.visible) continue;
+      if (sky?.known && !sky.known(change.behind.alt, change.behind.az)) continue;
+      const text = formatClock(new Date(change.t), tz);
+      const label: SkyTimeLabel = {
+        text,
+        t: change.t,
+        opens: change.opens,
+        x0: p.x + RISE_SET_GAP,
+        top: change.opens ? p.y - RISE_ABOVE - LABEL_HEIGHT : p.y + SET_BELOW,
+        width: SKY_TIME_ICON_PX + 3 + ctx.measureText(text).width,
+      };
+      const from = label.x0;
+      let clear = false;
+      for (let guard = 0; guard < 8 && !clear; guard++) {
+        const box = skyTimeBox(label);
+        const hit = placed.find((o) => overlaps(box, o));
+        if (!hit) clear = true;
+        else label.x0 = hit.x1 + RISE_SET_ADJACENT;
+      }
+      if (!clear || label.x0 - from > SKY_TIME_MAX_SLIDE_PX) continue;
+      placed.push(skyTimeBox(label));
+      out.push(label);
+    }
+    ctx.restore();
+    return out;
+  }
+
+  /** Draws the skyline times where skyTimeLabels put them: an eye, open or closed, and the time, in each path's colour. */
+  private drawSkyTimes(): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (const { label, color } of this.skyTimes) {
+      const x = label.x0;
+      const y = label.top + LABEL_HEIGHT / 2;
+      const eye = new Path2D();
+      if (label.opens) {
+        // An open eye: two lids, and the pupil (filled below).
+        eye.moveTo(x + 0.5, y);
+        eye.quadraticCurveTo(x + 5.75, y - 6, x + 11, y);
+        eye.quadraticCurveTo(x + 5.75, y + 6, x + 0.5, y);
+      } else {
+        // A closed one: the lower lid, and three lashes.
+        eye.moveTo(x + 0.5, y - 1);
+        eye.quadraticCurveTo(x + 5.75, y + 4.5, x + 11, y - 1);
+        eye.moveTo(x + 2.8, y + 1.7);
+        eye.lineTo(x + 1.9, y + 4.2);
+        eye.moveTo(x + 5.75, y + 2.7);
+        eye.lineTo(x + 5.75, y + 5.4);
+        eye.moveTo(x + 8.7, y + 1.7);
+        eye.lineTo(x + 9.6, y + 4.2);
+      }
+      const pupil = new Path2D();
+      if (label.opens) pupil.arc(x + 5.75, y, 1.9, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineWidth = 3.6;
+      ctx.stroke(eye);
+      ctx.stroke(pupil);
+      ctx.lineWidth = 3;
+      ctx.strokeText(label.text, x + SKY_TIME_ICON_PX + 3, label.top);
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.stroke(eye);
+      ctx.fill(pupil);
+      ctx.fillText(label.text, x + SKY_TIME_ICON_PX + 3, label.top);
+    }
     ctx.restore();
   }
 
@@ -503,6 +953,7 @@ export class Overlay {
       const w = ctx.measureText(text).width;
       out.push({
         text,
+        t: when.getTime(),
         rising,
         faint: !(rising ? b : a).bold,
         // To the right of the crossing, like the hour labels.
@@ -604,7 +1055,14 @@ export class Overlay {
       return;
     }
 
-    const { alignRight, below } = place(anchor);
+    const { alignRight, below, corners } = place(anchor);
+    // (Pressed, the name turns the view to its object and follows it, as the object's marker does. The upright box
+    // round the slanted name.)
+    this.hits.push({
+      box: { x0: Math.min(...corners.map((c) => c.x)), y0: Math.min(...corners.map((c) => c.y)), x1: Math.max(...corners.map((c) => c.x)), y1: Math.max(...corners.map((c) => c.y)) },
+      id,
+      says: `Turn to ${id}, and follow it`,
+    });
     ctx.translate(anchor.x, anchor.y);
     ctx.rotate(anchor.angle);
     ctx.textAlign = alignRight ? 'right' : 'left';
@@ -668,6 +1126,8 @@ export class Overlay {
       m.dot.style.width = m.dot.style.height = `${size}px`;
       m.root.classList.toggle('below', below);
       m.root.classList.toggle('offscreen', !onScreen);
+      // Up, on screen, and behind a building or a tree: dimmed, and still there to be pressed.
+      m.root.classList.toggle('behind', !!this.sky && !below && onScreen && this.sky.at(pos.alt, pos.az) <= 0);
       const where = `altitude ${pos.alt.toFixed(0)}°, azimuth ${pos.az.toFixed(0)}°`;
       if (onScreen) {
         m.root.style.transform = `translate(${p.x}px, ${p.y}px)`;
