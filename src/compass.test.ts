@@ -31,16 +31,16 @@ describe('northOffset', () => {
   // A phone whose back faces east (true alpha 270), with Safari's alpha
   // reading 40 for it: the offset should bring 40 to 270.
   const facesEast = (beta: number, compassHeading: number) =>
-    lookDirection(40 + northOffset(40, beta, compassHeading), beta, 0).heading;
+    lookDirection(40 + northOffset(40, compassHeading), beta, 0).heading;
 
   it('ties alpha to the compass while the phone leans forward of upright', () => {
-    // Top edge points east too: compass heading 90.
+    // Compass heading 90: east.
     expect(facesEast(45, 90)).toBeCloseTo(90, 5);
   });
 
-  it('allows for the top edge pointing behind once tipped past upright', () => {
-    // Looking up at the sky to the east, the top edge points west: 270.
-    expect(facesEast(135, 270)).toBeCloseTo(90, 5);
+  it('takes the compass the same way once tipped back past upright', () => {
+    // Looking up at the sky to the east, an iPhone still says 90.
+    expect(facesEast(135, 90)).toBeCloseTo(90, 5);
   });
 
   it('distrusts the compass near upright', () => {

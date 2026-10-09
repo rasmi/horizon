@@ -1508,7 +1508,7 @@ function onOrientation(e: CompassReading): void {
     // by the first good one.
     const steady = steadyForNorth(e.beta);
     if ((e.webkitCompassAccuracy ?? 0) >= 0 && (steady || compass.north === null)) {
-      const north = northOffset(alpha, e.beta, e.webkitCompassHeading);
+      const north = northOffset(alpha, e.webkitCompassHeading);
       compass.north =
         compass.north === null || !compass.northSteady ? north : turnToward(compass.north, north, COMPASS_NORTH_SMOOTHING);
       compass.northSteady = steady;

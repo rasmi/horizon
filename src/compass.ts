@@ -43,17 +43,16 @@ export function lookDirection(alpha: number, beta: number, gamma: number): { hea
 
 /**
  * Safari's readings: `alpha` there starts from wherever the phone happened to
- * face, and north comes separately, as a compass heading. That heading is the
- * bearing of the phone's top edge laid flat on the ground, which is the same
- * turn as `alpha` (the other way round) while the phone leans less than
- * upright, and its opposite once tipped back past upright, when the top edge
- * swings round to point behind. Near upright the top edge points at the sky,
- * its bearing is noise, and so is the answer: see `steadyForNorth`.
+ * face, and north comes separately, as a compass heading: the same turn as
+ * `alpha`, the other way round. It's taken as it comes however the phone is
+ * tilted: an iPhone doesn't turn it half-way round once the phone is tipped
+ * back past upright, though its top edge then points behind. Near upright
+ * the heading is still the least sure: see `steadyForNorth`.
  *
  * Returns what to add to `alpha` to measure it from north.
  */
-export function northOffset(alpha: number, beta: number, compassHeading: number): number {
-  return wrap(360 - compassHeading - alpha + (Math.abs(beta) > 90 ? 180 : 0));
+export function northOffset(alpha: number, compassHeading: number): number {
+  return wrap(360 - compassHeading - alpha);
 }
 
 /** Whether the phone is far enough from upright for its compass heading to mean something. */
