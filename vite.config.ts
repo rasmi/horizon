@@ -20,8 +20,21 @@ function liteRtRuntime(): Plugin {
   };
 }
 
+/**
+ * Cloudflare Web Analytics' beacon, added to the built page only, so the dev
+ * server's visits aren't counted.
+ */
+function cloudflareAnalytics(): Plugin {
+  const beacon = `<script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "2f551facde294d499d708867940c4838"}'></script>`;
+  return {
+    name: 'cloudflare-analytics',
+    apply: 'build',
+    transformIndexHtml: (html) => html.replace('</body>', `  ${beacon}\n  </body>`),
+  };
+}
+
 export default defineConfig({
   base: './',
   envPrefix: ['VITE_', 'GOOGLE_MAPS_API_KEY'],
-  plugins: [liteRtRuntime()],
+  plugins: [liteRtRuntime(), cloudflareAnalytics()],
 });
