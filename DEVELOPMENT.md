@@ -176,7 +176,7 @@ in the browser (`horizon.sky`) and reloads the page.
 | `skyglow.ts`, `third_party/light-pollution-atlas/skyglow.webp` | How bright artificial light makes the sky at the place shown, which sets how faint a star shows there by default: a cut of David Lorenz's Light Pollution Atlas, a tenth of a degree to the cell, eleven levels, 129 KB. A city centre shows stars to magnitude 3.5 in a view at its widest, a dark site to 5 as before; zooming in still brings fainter ones out. "Stars as seen from this place" in the ⓘ settings switches it off (`horizon.skyglow`) |
 | `skycolor.ts` | The sky's colour by the Sun's altitude: in steps for the slider, blended for the chart |
 | `overlay.ts` | Paths, hour dots and markers dimmed where the sky map says they're behind something (`splitBySky`), with a time and an eye where a path meets the skyline; the chart's names (stars, constellations, objects) |
-| `roofline.ts`, `panel.ts` | When tonight each object is in open sky from here, behind something, or where the sky hasn't been looked at; shown on each row's plot and, in an open row, as eyes to jump by |
+| `roofline.ts`, `panel.ts` | When tonight each object is in open sky from here, behind something, or where the sky hasn't been looked at; shown on each row's plot and, in an open row, as eyes to jump by. And, for the day arrows, when an object comes out or goes behind at the same patch of skyline a night on or back (`skylineCrossingFrom`): its track asked of the sky map every 2 minutes for a day and a half, the crossing of that kind nearest in the sky taken, within 15° |
 | `chart.test.ts`, `skyglow.test.ts` | The depth, the easing and pour, the stars' places against astronomy-engine's, the path split, the clearing times; the light pollution map |
 
 `main.ts` fetches all of it, the sky map and its model included, only
@@ -235,6 +235,16 @@ with the downloads.
   (`axis.ts`). The chart's rows are rebuilt only when the night, the objects
   shown or the open rows change; scrubbing and playback just move the time
   line and refresh the open rows' "now" text.
+- The day arrows step by how the time was last set (`timeSetBy` in
+  `main.ts`): by hand (the slider, the date, the hour keys, Now), at an
+  event (a rise, set or transit, sunset or sunrise, darkness starting or
+  ending, a time at the skyline), or neither. `shiftDay` keeps a night time
+  set by hand; otherwise it goes to the next event of the kind the time is
+  at (`nextEvent`: `eventFrom` in `astro.ts`, or `skylineCrossingFrom` in
+  `roofline.ts`), and failing that to the next sunset. It looks from an hour
+  on from an event the time is at, as a crossing read off a plot is a few
+  minutes off the exact one; and from a minute on from any other time, so
+  that a sunset half an hour off isn't skipped.
 
 Stack: Vite and TypeScript with no UI framework; `@googlemaps/js-api-loader`,
 `astronomy-engine`, `tz-lookup` and `geomagnetism`; and, where the night
@@ -326,6 +336,12 @@ low in the sky at mid-northern latitudes.
   nothing else.
 - Street View has no option to turn off its keyboard panning, so the arrow-key
   shortcuts are caught in the capture phase, before its handlers.
+- Its click-to-move is switched off above the horizon, so a click or tap on
+  the sky doesn't step along the street. Its `clickToGo` option is set by
+  the altitude under the pointer as a mouse moves over the view and as a
+  finger comes down, in the capture phase on the panorama's container,
+  before Street View has the press. Dragging to pan isn't click-to-move,
+  and still works everywhere.
 - In dev builds the panorama is available as `window.__pano` for repeating
   these measurements.
 
@@ -348,7 +364,7 @@ accurate in 2011 captures as in recent ones.
 
 | File | Role |
 | --- | --- |
-| `src/astro.ts` | astronomy-engine wrappers: positions, paths, rise/set/transit, observable windows |
+| `src/astro.ts` | astronomy-engine wrappers: positions, paths, rise/set/transit, observable windows; the next or last event of a kind, for the day arrows (`eventFrom`), and whether the Sun is down (`sunDown`) |
 | `src/projection.ts` | Street View camera model, alt/az → screen projection, label anchoring |
 | `src/overlay.ts` | Canvas paths, labels, horizon and compass; DOM markers and edge arrows |
 | `src/panel.ts` | The chart of the night (one altitude plot per object, with its toggle and details), and the slider's sky shading, hour marks and sunset/sunrise labels |
