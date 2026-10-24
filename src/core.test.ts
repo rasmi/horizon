@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boldBoundary, computeNight, horizontal, interpolate, observableTonight, observer, type BodyId } from './astro';
+import { boldBoundary, computeNight, eventFrom, horizontal, interpolate, observableTonight, observer, sunDown, type BodyId } from './astro';
 import { edgeIndicator, focalLength, lineLabelAnchor, lookAt, project, streetViewHfov, type Camera } from './projection';
 import { readState, shownBodies, stateToSearch } from './state';
 import { nightWindow, shiftDays, tzOffsetMinutes, wallTime, zonedToDate } from './time';
@@ -234,6 +234,39 @@ describe('night events', () => {
     expect(boldBoundary(at(1, 270, -30), at(-1, 271, -30)).alt).toBeCloseTo(0);
     // Azimuth wraps through north.
     expect(boldBoundary(at(-1, 359, -30), at(1, 1, -30)).az % 360).toBeCloseTo(0);
+  });
+
+  it('steps from sunset to sunset', () => {
+    const obs = observer(40.7, -74);
+    const sunset = n.sunEvents.sunset!;
+    const sunsetFrom = (t: Date, dir: 1 | -1) => eventFrom(obs, 'Sun', 'set', t, dir, 12);
+    // From the afternoon: that evening's sunset; from 2 AM: the coming evening's, not the next day's.
+    expect(sunsetFrom(new Date(sunset.getTime() - 3 * 3600000), 1)).toEqual(sunset);
+    const after = sunsetFrom(new Date(sunset.getTime() + 7 * 3600000), 1)!;
+    expect((after.getTime() - sunset.getTime()) / 3600000).toBeCloseTo(24, 0);
+    // From a sunset itself: the next one, or the one before.
+    expect(sunsetFrom(sunset, 1)).toEqual(after);
+    expect((sunset.getTime() - sunsetFrom(sunset, -1)!.getTime()) / 3600000).toBeCloseTo(24, 0);
+    expect(sunDown(obs, new Date(sunset.getTime() - 60000))).toBe(false);
+    expect(sunDown(obs, new Date(sunset.getTime() + 60000))).toBe(true);
+    // Polar summer: no sunset.
+    expect(eventFrom(observer(80, 0), 'Sun', 'set', new Date('2026-06-21T12:00:00Z'), 1, 12)).toBeNull();
+  });
+
+  it("steps to an object's next event of the same kind", () => {
+    const obs = observer(40.7, -74);
+    const hoursOn = (id: BodyId, kind: 'rise' | 'set' | 'transit', from: Date, dir: 1 | -1) =>
+      (eventFrom(obs, id, kind, from, dir, 12)!.getTime() - from.getTime()) / 3600000;
+    // A planet's comes about four minutes earlier each day; the Moon's, most of an hour later.
+    const saturn = n.bodies.get('Saturn')!;
+    expect(hoursOn('Saturn', 'rise', saturn.rise!, 1)).toBeCloseTo(23.93, 1);
+    expect(hoursOn('Saturn', 'transit', saturn.transit!, -1)).toBeCloseTo(-23.93, 1);
+    const moon = n.bodies.get('Moon')!;
+    expect(hoursOn('Moon', 'set', moon.set!, 1)).toBeGreaterThan(24.3);
+    expect(hoursOn('Moon', 'set', moon.set!, 1)).toBeLessThan(25.5);
+    // Darkness, by the twilight setting.
+    const dark = n.sunEvents.darkStart!;
+    expect((eventFrom(obs, 'Sun', 'dark', dark, 1, 12)!.getTime() - dark.getTime()) / 3600000).toBeCloseTo(24, 0);
   });
 
   it('orders the sun events through the night', () => {

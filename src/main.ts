@@ -3,7 +3,7 @@ import './style.css';
 import { setSkyEnabled, skyEnabled, skyOffered } from './sky/preserve';
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import tzlookup from 'tz-lookup';
-import { BODIES, computeNight, interpolate, observableTonight, type BodyId, type NightData } from './astro';
+import { BODIES, computeNight, eventFrom, interpolate, observableTonight, observer, sunDown, type BodyId, type NightData, type PickedEvent } from './astro';
 import { axisFor, nightAxis, type TimeAxis } from './axis';
 import { declination, lookDirection, northOffset, steadyForNorth, turnToward } from './compass';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
@@ -76,7 +76,7 @@ let stepCapture: (dir: -1 | 1) => void = () => {};
 let showPano: (id: string) => Promise<boolean> = async () => false;
 
 // (A press on an object's name over the view turns to it; one on one of its times goes to that time, on that object.)
-const overlay = new Overlay(els.overlay, lookAtBody, (t, id) => jumpTo(new Date(t), id));
+const overlay = new Overlay(els.overlay, lookAtBody, (t, id, kind) => jumpTo(new Date(t), id, kind && { id, kind }));
 
 // ---------- toast ----------
 
@@ -107,7 +107,7 @@ function recompute(): void {
   // its sky shading and hour marks, and the sunset and sunrise above it.
   if (night !== nightDrawn) {
     nightDrawn = night;
-    renderSunTimes(els.sunTimes, night, tz, jumpTo);
+    renderSunTimes(els.sunTimes, night, tz, (t, kind) => jumpTo(t, undefined, { id: 'Sun', kind }));
     renderHourLabels(els.sliderScale, night, tz);
     els.sliderTrack.style.background = night
       ? [midnightMark(night, tz), sliderTicks(night), sliderGradient(night)].filter(Boolean).join(', ')
@@ -327,7 +327,7 @@ function renderInfoPanel(): void {
       dragTo(fraction);
     },
     onScrubEnd: stopEdgeRun,
-    onJump: jumpTo,
+    onJump: (t, id, kind) => jumpTo(t, id, kind && { id, kind }),
   }, openTimes);
 }
 
@@ -393,8 +393,10 @@ function toggleBody(id: BodyId): void {
  * blink from one place to another; further off, or for a visitor who has
  * asked for less motion, it goes straight there.
  */
-function jumpTo(t: Date, id?: BodyId): void {
+function jumpTo(t: Date, id?: BodyId, event?: PickedEvent): void {
   pauseForScrub();
+  timeByHand = false;
+  pickedEvent = event ?? null;
   // A moment of an object's own (its rise, its transit, a time at the skyline): the view goes to the object and stays on
   // it, as when its name is pressed or its plot dragged.
   if (id) {
@@ -507,6 +509,21 @@ function setTime(t: Date): void {
   recompute();
   follow();
   writeState(state);
+}
+
+/**
+ * Whether the time was last set by hand (the slider, the date, the hour keys,
+ * or Now) rather than gone to (a sunset, a rise) or played. The day arrows
+ * keep a night time set by hand from one night to the next.
+ */
+let timeByHand = false;
+/** The event the time was last gone to, if it was gone to an event: the day arrows step to the next of its kind. */
+let pickedEvent: PickedEvent | null = null;
+
+function setTimeByHand(t: Date): void {
+  timeByHand = true;
+  pickedEvent = null;
+  setTime(t);
 }
 
 // ---------- rendering ----------
@@ -1114,7 +1131,7 @@ function dragTo(fraction: number): void {
   // Just arrived: the last time of this night, then run on after a moment.
   stopEdgeRun();
   const win = currentWindow();
-  setTime(new Date(dir > 0 ? win.end.getTime() - SLIDER_STEP_MS : win.start.getTime()));
+  setTimeByHand(new Date(dir > 0 ? win.end.getTime() - SLIDER_STEP_MS : win.start.getTime()));
   edge.dir = dir;
   edge.timer = window.setTimeout(() => {
     edge.last = performance.now();
@@ -1131,7 +1148,7 @@ function scrubTo(fraction: number): void {
   const start = win.start.getTime();
   const t = sliderAxis().toTime(fraction);
   const last = win.end.getTime() - SLIDER_STEP_MS; // the window's end is the next night's start
-  setTime(new Date(Math.min(start + Math.round((t - start) / SLIDER_STEP_MS) * SLIDER_STEP_MS, last)));
+  setTimeByHand(new Date(Math.min(start + Math.round((t - start) / SLIDER_STEP_MS) * SLIDER_STEP_MS, last)));
 }
 // The slider's positions aren't even steps of time, so arrow keys on it step
 // the time itself: five minutes, or an hour with Page Up/Down. A step past
@@ -1149,7 +1166,7 @@ els.slider.addEventListener('keydown', (e) => {
   if (!step || e.altKey || e.ctrlKey || e.metaKey) return;
   e.preventDefault();
   pauseForScrub();
-  setTime(new Date(state.time.getTime() + step));
+  setTimeByHand(new Date(state.time.getTime() + step));
 });
 // "change" fires when a drag is released: leave the thumb where the time is.
 els.slider.addEventListener('change', () => {
@@ -1164,7 +1181,7 @@ els.date.addEventListener('change', () => {
   if (year < 1000) return;
   // The same clock time, on the chosen date.
   const { hour, minute } = wallTime(state.time, tz);
-  setTime(zonedToDate({ year, month, day, hour, minute }, tz));
+  setTimeByHand(zonedToDate({ year, month, day, hour, minute }, tz));
 });
 
 // Show the applied date again once typing is done (it may have been left partial).
@@ -1228,9 +1245,46 @@ els.date.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === 'Escape') els.date.blur();
 });
 
-els.now.addEventListener('click', () => jumpTo(new Date()));
+els.now.addEventListener('click', () => {
+  jumpTo(new Date());
+  timeByHand = true;
+});
 
-const shiftDay = (days: number) => setTime(shiftDays(state.time, days, tz));
+/**
+ * The day arrows. After a picked event (a rise, a set, a transit, sunset,
+ * sunrise, when darkness starts or ends) they go to the next of its kind, or
+ * the last before it. Otherwise a night time set by hand goes to the same
+ * time a night on, or back; and any other time goes to the next sunset after
+ * it, or the last one before it, so that stepping goes from evening to
+ * evening. Where there's no such event or sunset, it's a plain day's step.
+ *
+ * Night here is sunset to sunrise, deliberately not the twilight setting's
+ * darkness (state.twilight): a time set just after sunset is already a night
+ * time to keep, though the sky isn't yet counted as dark.
+ */
+function shiftDay(dir: 1 | -1): void {
+  if (state.lat !== null && state.lng !== null) {
+    const obs = observer(state.lat, state.lng);
+    if (pickedEvent) {
+      // (From an hour on: a crossing picked off a plot is a few minutes off the exact one, which mustn't count as the
+      // next.)
+      const from = new Date(state.time.getTime() + dir * 3600000);
+      const next = eventFrom(obs, pickedEvent.id, pickedEvent.kind, from, dir, state.twilight);
+      if (next) {
+        setTime(next);
+        return;
+      }
+      pickedEvent = null;
+    }
+    const sunset = timeByHand && sunDown(obs, state.time) ? null : eventFrom(obs, 'Sun', 'set', state.time, dir, state.twilight);
+    if (sunset) {
+      timeByHand = false;
+      setTime(sunset);
+      return;
+    }
+  }
+  setTime(shiftDays(state.time, dir, tz));
+}
 
 /**
  * Runs `action` on a press, then again and again while the button is held:
@@ -1292,10 +1346,10 @@ window.addEventListener('keydown', (e) => {
       shiftDay(1);
       break;
     case 'ArrowUp':
-      setTime(new Date(state.time.getTime() + HOUR));
+      setTimeByHand(new Date(state.time.getTime() + HOUR));
       break;
     case 'ArrowDown':
-      setTime(new Date(state.time.getTime() - HOUR));
+      setTimeByHand(new Date(state.time.getTime() - HOUR));
       break;
     case '[':
       stepCapture(-1);
@@ -1319,6 +1373,8 @@ function setPlaying(on: boolean): void {
   if (!on) return;
   // (Playing takes over from a run to a pressed moment, from wherever it has got to.)
   glide = null;
+  timeByHand = false;
+  pickedEvent = null;
   let last = performance.now();
   const tick = (now: number) => {
     // One hour of sky per second of playback.

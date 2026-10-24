@@ -6,6 +6,7 @@ import {
   magnitude,
   twilightLabel,
   type BodyId,
+  type EventKind,
   type NightData,
   type Sample,
 } from './astro';
@@ -177,8 +178,8 @@ export function renderSunTimes(
   root: HTMLElement,
   data: NightData | null,
   tz: string,
-  /** Called with the moment when a label is pressed, to jump there. */
-  onPick: (time: Date) => void,
+  /** Called with the moment when a label is pressed, to jump there, and which it is. */
+  onPick: (time: Date, kind: 'set' | 'rise') => void,
 ): void {
   root.replaceChildren();
   if (!data) return;
@@ -191,12 +192,12 @@ export function renderSunTimes(
     inWindow(sunset) &&
     inWindow(sunrise) &&
     axis.toFraction(sunrise.getTime()) - axis.toFraction(sunset.getTime()) < SUN_LABELS_CLOSE;
-  const label = (d: Date | null, name: string, icon: string, side: string) => {
+  const label = (d: Date | null, kind: 'set' | 'rise', name: string, icon: string, side: string) => {
     if (!inWindow(d)) return;
     const el = document.createElement('button');
     el.type = 'button';
     if (close) el.className = side;
-    el.addEventListener('click', () => onPick(d));
+    el.addEventListener('click', () => onPick(d, kind));
     // (Centred labels stop short of the slider's right-hand end, to stay inside the panel.)
     const at = `${(axis.toFraction(d.getTime()) * 100).toFixed(2)}%`;
     el.style.left = close ? at : `min(${at}, calc(100% - 10px))`;
@@ -204,8 +205,8 @@ export function renderSunTimes(
     el.title = `${name} ${formatDate(d, tz)}, ${formatClock(d, tz)}. Jump to it`;
     root.append(el);
   };
-  label(sunset, 'Sunset', SUNSET_ICON, 'before');
-  label(sunrise, 'Sunrise', SUNRISE_ICON, 'after');
+  label(sunset, 'set', 'Sunset', SUNSET_ICON, 'before');
+  label(sunrise, 'rise', 'Sunrise', SUNRISE_ICON, 'after');
 }
 
 function fmtWindows(list: { start: Date; end: Date }[], tz: string): string {
@@ -402,7 +403,8 @@ export function renderInfo(
    * `onScrub`: an open plot (this object's) is being dragged, to this position
    * along the axis (0–1, or beyond when the pointer is past an end).
    * `onScrubEnd`: let go.
-   * `onJump`: one of a row's events was pressed, to go to its time.
+   * `onJump`: one of a row's events was pressed, to go to its time; `kind`
+   * is which event, unless it's a time at the skyline.
    */
   actions: {
     onToggle: (id: BodyId) => void;
@@ -410,7 +412,7 @@ export function renderInfo(
     onDetails: () => void;
     onScrub: (fraction: number, id: BodyId) => void;
     onScrubEnd: () => void;
-    onJump: (time: Date, id: BodyId) => void;
+    onJump: (time: Date, id: BodyId, kind?: EventKind) => void;
   },
   /**
    * Where the sky map is on: for each object, when tonight it's in open sky
@@ -576,7 +578,7 @@ export function renderInfo(
       // The transit dot and the peak beside it jump to the transit. (They're
       // inside the plot, which is itself a button, so the click is caught here.)
       if (s.transit && (ev.target as Element).closest('.tl-apex')) {
-        actions.onJump(s.transit, id);
+        actions.onJump(s.transit, id, 'transit');
         return;
       }
       if (!expanded.delete(id)) expanded.add(id);
@@ -596,12 +598,12 @@ export function renderInfo(
     const onAxis = (d: Date | null): d is Date => !!d && d >= data.start && d <= data.end;
     const peak = `${s.peakAlt.toFixed(0)}°`;
     const e = data.sunEvents;
-    const events: { time: Date | null; icon: string; text: (d: Date) => string; name: string }[] = sun
+    const events: { time: Date | null; kind: EventKind; icon: string; text: (d: Date) => string; name: string }[] = sun
       ? [
-          { time: e.sunset, icon: ICON.set, text: short, name: 'Sunset' },
-          { time: e.darkStart, icon: '', text: (d) => `dark ${short(d)}`, name: 'Dark from' },
-          { time: e.darkEnd, icon: '', text: (d) => `light ${short(d)}`, name: 'Dark until' },
-          { time: e.sunrise, icon: ICON.rise, text: short, name: 'Sunrise' },
+          { time: e.sunset, kind: 'set', icon: ICON.set, text: short, name: 'Sunset' },
+          { time: e.darkStart, kind: 'dark', icon: '', text: (d) => `dark ${short(d)}`, name: 'Dark from' },
+          { time: e.darkEnd, kind: 'light', icon: '', text: (d) => `light ${short(d)}`, name: 'Dark until' },
+          { time: e.sunrise, kind: 'rise', icon: ICON.rise, text: short, name: 'Sunrise' },
         ]
       : [
           // Every rise and set the plot shows, each under its own crossing.
@@ -614,19 +616,20 @@ export function renderInfo(
             const mine = !!exact && Math.abs(exact.getTime() - c.t) < 10 * 60000;
             return {
               time: mine ? exact : new Date(c.t),
+              kind: c.rising ? ('rise' as const) : ('set' as const),
               icon: c.rising ? ICON.rise : ICON.set,
               text: short,
               name: c.rising ? 'Rise' : 'Set',
             };
           }),
           ...[
-            { time: s.rise, icon: ICON.rise, text: short, name: 'Rise', rising: true },
-            { time: s.set, icon: ICON.set, text: short, name: 'Set', rising: false },
+            { time: s.rise, kind: 'rise' as const, icon: ICON.rise, text: short, name: 'Rise', rising: true },
+            { time: s.set, kind: 'set' as const, icon: ICON.set, text: short, name: 'Set', rising: false },
           ].filter(
             (ev) =>
               !!ev.time && !onAxis(ev.time) && !horizonCrossings(s.samples).some((c) => c.rising === ev.rising),
           ),
-          { time: s.transit, icon: ICON.transit, text: short, name: `Transit, at ${peak}:` },
+          { time: s.transit, kind: 'transit', icon: ICON.transit, text: short, name: `Transit, at ${peak}:` },
         ];
 
     // Labels sit centred under their moments, nudged apart where they'd
@@ -658,7 +661,7 @@ export function renderInfo(
     const labels = placed
       .map(
         (p) =>
-          `<button type="button" data-t="${p.ev.time!.getTime()}" style="left:${p.at.toFixed(2)}%" title="${full(p.ev.name, p.ev.time!)}. Jump to it">${p.html}</button>`,
+          `<button type="button" data-t="${p.ev.time!.getTime()}" data-kind="${p.ev.kind}" style="left:${p.at.toFixed(2)}%" title="${full(p.ev.name, p.ev.time!)}. Jump to it">${p.html}</button>`,
       )
       .join('');
     // A dot on the curve at transit, where the peak is, with the peak
@@ -695,7 +698,8 @@ export function renderInfo(
       `${eyes ? `<div class="tl-eyes">${eyes}</div>` : ''}<div class="tl-events">${marks}${labels}</div>`,
     );
     for (const button of li.querySelectorAll<HTMLButtonElement>('.tl-events button, .tl-eyes button')) {
-      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id));
+      // (The eyes, times at the skyline, have no kind.)
+      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id, button.dataset.kind as EventKind | undefined));
     }
     // And, by the sky map, what the eyes on the plot can't say: that it's behind the skyline all the while, or that part
     // of its path hasn't been looked at. (When it's in open sky is the eyes' to say, and the plot's tooltip's.)

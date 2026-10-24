@@ -248,6 +248,46 @@ function cyclePath(
   return out;
 }
 
+/** Whether the Sun is down at `t`: after sunset and before sunrise. */
+export function sunDown(obs: A.Observer, t: Date): boolean {
+  const eq = A.Equator(A.Body.Sun, t, obs, true, true);
+  // (Unrefracted, as SUN_DOWN allows for refraction itself: so it turns exactly at sunset.)
+  return A.Horizon(t, obs, eq.ra, eq.dec).altitude < SUN_DOWN;
+}
+
+/** A kind of event of an object's: its rise, set or transit, or (for the Sun) when darkness starts or ends. */
+export type EventKind = 'rise' | 'set' | 'transit' | 'dark' | 'light';
+
+/** An event that was picked, to go to: the day arrows then step to the next of its kind (see eventFrom). */
+export interface PickedEvent {
+  id: BodyId;
+  kind: EventKind;
+}
+
+/**
+ * The first `kind` of event of `id`'s after `t` (dir 1) or the last before it
+ * (dir -1), if there's one within a day and a half. Darkness starts and ends
+ * by `twilightDeg`.
+ */
+export function eventFrom(obs: A.Observer, id: BodyId, kind: EventKind, t: Date, dir: 1 | -1, twilightDeg: number): Date | null {
+  const body = A.Body[id];
+  // (Searching from a minute on, so that from an event it finds the next one and not the same.)
+  const from = new Date(t.getTime() + dir * 60000);
+  const limit = dir * 1.5;
+  switch (kind) {
+    case 'rise':
+      return dateOf(A.SearchRiseSet(body, obs, +1, from, limit));
+    case 'set':
+      return dateOf(A.SearchRiseSet(body, obs, -1, from, limit));
+    case 'dark':
+      return dateOf(A.SearchAltitude(body, obs, -1, from, limit, -twilightDeg));
+    case 'light':
+      return dateOf(A.SearchAltitude(body, obs, +1, from, limit, -twilightDeg));
+    case 'transit':
+      return A.SearchHourAngle(body, obs, 0, from, dir).time.date;
+  }
+}
+
 function sunEvents(obs: A.Observer, start: Date, twilightDeg: number): SunEvents {
   const sun = A.Body.Sun;
   const sunset = dateOf(A.SearchRiseSet(sun, obs, -1, start, 1));

@@ -5,6 +5,7 @@ import {
   magnitude,
   type AltAz,
   type BodyId,
+  type EventKind,
   type Sample,
   type NightData,
   type NightSummary,
@@ -338,13 +339,14 @@ export class Overlay {
    * object's, and doesn't reach Street View (where it would be a step along
    * the street).
    */
-  private hits: { box: Box; id: BodyId; t?: number; says: string }[] = [];
+  private hits: { box: Box; id: BodyId; t?: number; kind?: EventKind; says: string }[] = [];
   private hitEls: HTMLButtonElement[] = [];
 
   constructor(
     container: HTMLElement,
     private onSelect: (id: BodyId) => void,
-    private onJump: (t: number, id: BodyId) => void = () => {},
+    /** `kind` is the event the time is, if it's one: a rise. */
+    private onJump: (t: number, id: BodyId, kind?: EventKind) => void = () => {},
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'overlay-canvas';
@@ -389,7 +391,7 @@ export class Overlay {
       for (const id of bodies) {
         this.drawRiseSet(riseSet.get(id) ?? [], BODY_COLOR[id]);
         // (A rise time sits above the horizon, and can be pressed; a set time sits below it, among the street.)
-        for (const label of riseSet.get(id) ?? []) if (label.rising) this.hits.push({ box: riseSetBox(label), id, t: label.t, says: `Go to when ${id} rises, and follow it` });
+        for (const label of riseSet.get(id) ?? []) if (label.rising) this.hits.push({ box: riseSetBox(label), id, t: label.t, kind: 'rise', says: `Go to when ${id} rises, and follow it` });
       }
       this.drawSkyTimes();
     }
@@ -411,7 +413,7 @@ export class Overlay {
           const pressed = this.hits[i];
           if (!pressed) return;
           if (pressed.t === undefined) this.onSelect(pressed.id);
-          else this.onJump(pressed.t, pressed.id);
+          else this.onJump(pressed.t, pressed.id, pressed.kind);
         });
         this.layer.append(el);
         this.hitEls[i] = el;

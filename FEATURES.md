@@ -36,8 +36,19 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   transit, set or skyline time in the chart, or back to now) runs the time
   there in about half a second where it's within a day or so, so the sky
   is seen to turn to it; further off it goes straight there.
-- ‹ › step a day at the same clock time (hold one to keep stepping, faster
-  and faster). On desktop, ←/→ step a day and ↑/↓ an
+- ‹ › step a day (hold one to keep stepping, faster and faster). After you
+  pick an event (an object's rise, set or transit, on the view or in the
+  chart; sunset or sunrise; when darkness starts or ends) they go to the
+  next of that kind, or the last before it: Saturn's next rise, say, about
+  four minutes earlier, or the Moon's, most of an hour later, even when that
+  falls in daylight. A time at the skyline isn't an event of this kind.
+  Where there's no next one, they step as below. From a
+  night time you set yourself (with the slider, the date, the hour keys or
+  Now) they keep that clock time, a night on or back, to compare night by
+  night; from any other time, daytime included, they go to the next sunset
+  (or the last one before it), so stepping goes from evening to evening.
+  Night here runs from sunset to sunrise, on purpose not the twilight
+  setting's darkness. Where the Sun doesn't set they step 24 hours. On desktop, ←/→ step a day and ↑/↓ an
   hour (except while typing or in the slider, where arrows behave normally).
   These keys replace Street View's own keyboard panning; dragging still pans.
 - The slider and the timeline share one time axis, noon to noon, with daytime
