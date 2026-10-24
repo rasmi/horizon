@@ -1565,7 +1565,7 @@ const compass = {
   pitch: 0,
   /** iPhones: what to add to their `alpha` (which starts anywhere) to measure it from north. */
   north: null as number | null,
-  /** Whether that was learnt with the phone tilted enough to trust its compass. */
+  /** Whether a reading with the phone tilted enough to trust its compass has come yet: from then on, only such readings move `north`. */
   northSteady: false,
 };
 
@@ -1600,16 +1600,19 @@ function onOrientation(e: CompassReading): void {
     // Safari: motion that isn't tied to north, with a compass heading beside
     // it. Ease the motion's zero toward the compass, so the view moves as
     // smoothly as the motion while keeping the compass's sense of north.
-    // The compass says nothing useful while the phone is near upright
-    // (see compass.ts), so north is only learnt while it's tilted. A first
-    // reading taken upright is better than nothing, and is replaced outright
-    // by the first good one.
+    // The compass is least sure while the phone is near upright (see
+    // compass.ts). Until a reading has come with the phone tilted, north is
+    // eased toward the upright readings as they come, so that no one of them
+    // is kept; the first tilted reading replaces it outright, and after that
+    // only tilted ones move it.
     const steady = steadyForNorth(e.beta);
-    if ((e.webkitCompassAccuracy ?? 0) >= 0 && (steady || compass.north === null)) {
+    if ((e.webkitCompassAccuracy ?? 0) >= 0 && (steady || !compass.northSteady)) {
       const north = northOffset(alpha, e.webkitCompassHeading);
       compass.north =
-        compass.north === null || !compass.northSteady ? north : turnToward(compass.north, north, COMPASS_NORTH_SMOOTHING);
-      compass.northSteady = steady;
+        compass.north === null || (steady && !compass.northSteady)
+          ? north
+          : turnToward(compass.north, north, COMPASS_NORTH_SMOOTHING);
+      if (steady) compass.northSteady = true;
     }
     if (compass.north === null) return;
     alpha += compass.north;
