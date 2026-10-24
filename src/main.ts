@@ -9,7 +9,7 @@ import { declination, lookDirection, northOffset, steadyForNorth, turnToward } f
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
-import { streetViewHfov, type Camera } from './projection';
+import { streetViewHfov, unproject, type Camera } from './projection';
 import { openSky, openSkyKey, skylineCrossingFrom, type OpenSky, type SkylineKind } from './roofline';
 import type { SkyMap } from './sky';
 import type { ChartFrame, SkyChart } from './skychart';
@@ -746,6 +746,22 @@ async function initMaps(key: string | undefined): Promise<void> {
     requestRender();
   });
   new ResizeObserver(requestRender).observe(els.overlay);
+
+  // Street View's click-to-move is for the street: a click or tap above the horizon, on the sky, doesn't move. The
+  // view still drags round there, which isn't click-to-move. It's switched as a mouse moves over the view and as a
+  // finger comes down, before Street View has the press (so in the capture phase, on its own container).
+  let clickToGo = true;
+  const clickToGoAt = (e: PointerEvent) => {
+    const cam = camera();
+    if (!cam) return;
+    const box = els.pano.getBoundingClientRect();
+    const onGround = unproject(e.clientX - box.left, e.clientY - box.top, cam).alt <= 0;
+    if (onGround === clickToGo) return;
+    clickToGo = onGround;
+    pano!.setOptions({ clickToGo });
+  };
+  els.pano.addEventListener('pointermove', clickToGoAt, true);
+  els.pano.addEventListener('pointerdown', clickToGoAt, true);
 
   // ----- imagery dates (see imagery.ts) -----
 

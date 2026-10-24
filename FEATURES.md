@@ -55,6 +55,9 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   setting's darkness. Where the Sun doesn't set they step 24 hours. On desktop, ←/→ step a day and ↑/↓ an
   hour (except while typing or in the slider, where arrows behave normally).
   These keys replace Street View's own keyboard panning; dragging still pans.
+- A click or tap on the street moves along it, as in Street View; one above
+  the horizon, on the sky or the buildings, doesn't, so the sky can be
+  pressed and dragged round without stepping off somewhere.
 - The slider and the timeline share one time axis, noon to noon, with daytime
   squeezed: an hour of daylight takes a third of the width of an hour of
   night, so most of the travel is the night. On the slider itself, arrow keys
