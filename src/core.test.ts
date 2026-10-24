@@ -245,9 +245,9 @@ describe('night events', () => {
     expect(sunsetFrom(new Date(sunset.getTime() - 3 * 3600000), 1)).toEqual(sunset);
     const after = sunsetFrom(new Date(sunset.getTime() + 7 * 3600000), 1)!;
     expect((after.getTime() - sunset.getTime()) / 3600000).toBeCloseTo(24, 0);
-    // From a sunset itself: the next one, or the one before.
-    expect(sunsetFrom(sunset, 1)).toEqual(after);
-    expect((sunset.getTime() - sunsetFrom(sunset, -1)!.getTime()) / 3600000).toBeCloseTo(24, 0);
+    // From a sunset itself (looking from an hour on, or back, as the day arrows do): the next one, or the one before.
+    expect(sunsetFrom(new Date(sunset.getTime() + 3600000), 1)).toEqual(after);
+    expect((sunset.getTime() - sunsetFrom(new Date(sunset.getTime() - 3600000), -1)!.getTime()) / 3600000).toBeCloseTo(24, 0);
     expect(sunDown(obs, new Date(sunset.getTime() - 60000))).toBe(false);
     expect(sunDown(obs, new Date(sunset.getTime() + 60000))).toBe(true);
     // Polar summer: no sunset.
@@ -256,8 +256,9 @@ describe('night events', () => {
 
   it("steps to an object's next event of the same kind", () => {
     const obs = observer(40.7, -74);
-    const hoursOn = (id: BodyId, kind: 'rise' | 'set' | 'transit', from: Date, dir: 1 | -1) =>
-      (eventFrom(obs, id, kind, from, dir, 12)!.getTime() - from.getTime()) / 3600000;
+    // (Looking from an hour on from the event, or back, as the day arrows do.)
+    const hoursOn = (id: BodyId, kind: 'rise' | 'set' | 'transit' | 'dark', from: Date, dir: 1 | -1) =>
+      (eventFrom(obs, id, kind, new Date(from.getTime() + dir * 3600000), dir, 12)!.getTime() - from.getTime()) / 3600000;
     // A planet's comes about four minutes earlier each day; the Moon's, most of an hour later.
     const saturn = n.bodies.get('Saturn')!;
     expect(hoursOn('Saturn', 'rise', saturn.rise!, 1)).toBeCloseTo(23.93, 1);
@@ -266,8 +267,7 @@ describe('night events', () => {
     expect(hoursOn('Moon', 'set', moon.set!, 1)).toBeGreaterThan(24.3);
     expect(hoursOn('Moon', 'set', moon.set!, 1)).toBeLessThan(25.5);
     // Darkness, by the twilight setting.
-    const dark = n.sunEvents.darkStart!;
-    expect((eventFrom(obs, 'Sun', 'dark', dark, 1, 12)!.getTime() - dark.getTime()) / 3600000).toBeCloseTo(24, 0);
+    expect(hoursOn('Sun', 'dark', n.sunEvents.darkStart!, 1)).toBeCloseTo(24, 0);
   });
 
   it('steps to the same crossing of the skyline a night on', () => {

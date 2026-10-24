@@ -5,12 +5,13 @@ import {
   magnitude,
   type AltAz,
   type BodyId,
-  type PickedEvent,
+  type EventKind,
   type Sample,
   type NightData,
   type NightSummary,
 } from './astro';
 import { edgeIndicator, focalLength, lineLabelAnchor, project, type Camera, type LabelAnchor } from './projection';
+import type { SkylineKind } from './roofline';
 import type { Label } from './stars';
 import { formatClock, formatHour } from './time';
 
@@ -339,14 +340,14 @@ export class Overlay {
    * object's, and doesn't reach Street View (where it would be a step along
    * the street).
    */
-  private hits: { box: Box; id: BodyId; t?: number; kind?: PickedEvent['kind']; says: string }[] = [];
+  private hits: { box: Box; id: BodyId; t?: number; kind?: EventKind | SkylineKind; says: string }[] = [];
   private hitEls: HTMLButtonElement[] = [];
 
   constructor(
     container: HTMLElement,
     private onSelect: (id: BodyId) => void,
     /** `kind` is the event the time is, if it's one: a rise, or a time at the skyline. */
-    private onJump: (t: number, id: BodyId, kind?: PickedEvent['kind']) => void = () => {},
+    private onJump: (t: number, id: BodyId, kind?: EventKind | SkylineKind) => void = () => {},
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'overlay-canvas';

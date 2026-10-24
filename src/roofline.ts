@@ -65,6 +65,9 @@ export function openSky(summary: NightSummary, sun: Sample[], twilightDeg: numbe
   return out;
 }
 
+/** When an object comes out from behind the skyline (`opens`) or goes behind it (`closes`). */
+export type SkylineKind = 'opens' | 'closes';
+
 /** A stretch in open sky, or behind something, shorter than this doesn't count as coming out or going behind: leaves, a pole. */
 export const SKYLINE_MIN_MS = 15 * 60000;
 /** How far along the skyline a night's crossing may be from the last night's and still be the same one, in degrees. */

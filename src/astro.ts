@@ -259,37 +259,24 @@ export function sunDown(obs: A.Observer, t: Date): boolean {
 export type EventKind = 'rise' | 'set' | 'transit' | 'dark' | 'light';
 
 /**
- * An event that was picked, to go to: the day arrows then step to the next of
- * its kind (see eventFrom). It may also be when the object comes out from
- * behind the skyline (`opens`) or goes behind it (`closes`), by the sky map:
- * see skylineCrossingFrom in roofline.ts.
- */
-export interface PickedEvent {
-  id: BodyId;
-  kind: EventKind | 'opens' | 'closes';
-}
-
-/**
- * The first `kind` of event of `id`'s after `t` (dir 1) or the last before it
- * (dir -1), if there's one within a day and a half. Darkness starts and ends
- * by `twilightDeg`.
+ * The first `kind` of event of `id`'s from `t` on (dir 1) or the last before
+ * it (dir -1), if there's one within a day and a half. Darkness starts and
+ * ends by `twilightDeg`.
  */
 export function eventFrom(obs: A.Observer, id: BodyId, kind: EventKind, t: Date, dir: 1 | -1, twilightDeg: number): Date | null {
   const body = A.Body[id];
-  // (Searching from a minute on, so that from an event it finds the next one and not the same.)
-  const from = new Date(t.getTime() + dir * 60000);
   const limit = dir * 1.5;
   switch (kind) {
     case 'rise':
-      return dateOf(A.SearchRiseSet(body, obs, +1, from, limit));
+      return dateOf(A.SearchRiseSet(body, obs, +1, t, limit));
     case 'set':
-      return dateOf(A.SearchRiseSet(body, obs, -1, from, limit));
+      return dateOf(A.SearchRiseSet(body, obs, -1, t, limit));
     case 'dark':
-      return dateOf(A.SearchAltitude(body, obs, -1, from, limit, -twilightDeg));
+      return dateOf(A.SearchAltitude(body, obs, -1, t, limit, -twilightDeg));
     case 'light':
-      return dateOf(A.SearchAltitude(body, obs, +1, from, limit, -twilightDeg));
+      return dateOf(A.SearchAltitude(body, obs, +1, t, limit, -twilightDeg));
     case 'transit':
-      return A.SearchHourAngle(body, obs, 0, from, dir).time.date;
+      return A.SearchHourAngle(body, obs, 0, t, dir).time.date;
   }
 }
 

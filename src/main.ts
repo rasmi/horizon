@@ -3,14 +3,14 @@ import './style.css';
 import { setSkyEnabled, skyEnabled, skyOffered } from './sky/preserve';
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import tzlookup from 'tz-lookup';
-import { BODIES, computeNight, eventFrom, horizontal, interpolate, observableTonight, observer, sunDown, type BodyId, type NightData, type PickedEvent } from './astro';
+import { BODIES, computeNight, eventFrom, horizontal, interpolate, observableTonight, observer, sunDown, type BodyId, type EventKind, type NightData } from './astro';
 import { axisFor, nightAxis, type TimeAxis } from './axis';
 import { declination, lookDirection, northOffset, steadyForNorth, turnToward } from './compass';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
 import { streetViewHfov, type Camera } from './projection';
-import { openSky, openSkyKey, skylineCrossingFrom, type OpenSky } from './roofline';
+import { openSky, openSkyKey, skylineCrossingFrom, type OpenSky, type SkylineKind } from './roofline';
 import type { SkyMap } from './sky';
 import type { ChartFrame, SkyChart } from './skychart';
 import { duskShare } from './skycolor';
@@ -393,10 +393,9 @@ function toggleBody(id: BodyId): void {
  * blink from one place to another; further off, or for a visitor who has
  * asked for less motion, it goes straight there.
  */
-function jumpTo(t: Date, id?: BodyId, event?: PickedEvent): void {
+function jumpTo(t: Date, id?: BodyId, event?: DayEvent): void {
   pauseForScrub();
-  timeByHand = false;
-  pickedEvent = event ?? null;
+  timeSetBy = event ?? null;
   // A moment of an object's own (its rise, its transit, a time at the skyline): the view goes to the object and stays on
   // it, as when its name is pressed or its plot dragged.
   if (id) {
@@ -512,17 +511,24 @@ function setTime(t: Date): void {
 }
 
 /**
- * Whether the time was last set by hand (the slider, the date, the hour keys,
- * or Now) rather than gone to (a sunset, a rise) or played. The day arrows
- * keep a night time set by hand from one night to the next.
+ * An event of an object's the time can be at: a rise, set or transit, sunset
+ * or sunrise, when darkness starts or ends, or a time at the skyline.
  */
-let timeByHand = false;
-/** The event the time was last gone to, if it was gone to an event: the day arrows step to the next of its kind. */
-let pickedEvent: PickedEvent | null = null;
+interface DayEvent {
+  id: BodyId;
+  kind: EventKind | SkylineKind;
+}
+
+/**
+ * How the time was last set, for the day arrows (see shiftDay): by hand (the
+ * slider, the date, the hour keys, Now); by going to an event, so that it's
+ * at that event; or otherwise (playback, a link, a time gone to that isn't an
+ * event).
+ */
+let timeSetBy: 'hand' | DayEvent | null = null;
 
 function setTimeByHand(t: Date): void {
-  timeByHand = true;
-  pickedEvent = null;
+  timeSetBy = 'hand';
   setTime(t);
 }
 
@@ -1247,16 +1253,27 @@ els.date.addEventListener('keydown', (e) => {
 
 els.now.addEventListener('click', () => {
   jumpTo(new Date());
-  timeByHand = true;
+  timeSetBy = 'hand';
 });
 
+const SUNSET: DayEvent = { id: 'Sun', kind: 'set' };
 /**
- * The day arrows. After a picked event (a rise, a set, a transit, sunset,
- * sunrise, when darkness starts or ends) they go to the next of its kind, or
- * the last before it. Otherwise a night time set by hand goes to the same
- * time a night on, or back; and any other time goes to the next sunset after
- * it, or the last one before it, so that stepping goes from evening to
- * evening. Where there's no such event or sunset, it's a plain day's step.
+ * How far on the day arrows look for the next event: an hour from an event
+ * the time is at (one picked off a plot is a few minutes off the exact one,
+ * which mustn't count as the next), a minute from any other time (so that a
+ * sunset half an hour off still does).
+ */
+const FROM_EVENT_MS = 3600000;
+const FROM_ELSEWHERE_MS = 60000;
+
+/**
+ * The day arrows. From a night time set by hand they go to the same time a
+ * night on, or back. Otherwise they go to the next event of the kind the time
+ * is at, or the last before it (Saturn's rise to its next rise); and from any
+ * other time, daytime included, to the next sunset, or the last before it, so
+ * that stepping goes from evening to evening. Where there's no such event
+ * (the Sun doesn't set; the object's track has moved off a patch of
+ * skyline), the next sunset; failing that, a plain day's step.
  *
  * Night here is sunset to sunrise, deliberately not the twilight setting's
  * darkness (state.twilight): a time set just after sunset is already a night
@@ -1265,34 +1282,35 @@ els.now.addEventListener('click', () => {
 function shiftDay(dir: 1 | -1): void {
   if (state.lat !== null && state.lng !== null) {
     const obs = observer(state.lat, state.lng);
-    if (pickedEvent) {
-      // (From an hour on: a crossing picked off a plot is a few minutes off the exact one, which mustn't count as the
-      // next.)
-      const from = new Date(state.time.getTime() + dir * 3600000);
-      const { id, kind } = pickedEvent;
-      let next: Date | null = null;
-      if (kind === 'opens' || kind === 'closes') {
-        // By the sky map, at the patch of skyline nearest where the object is now (the last crossing).
-        const position = (t: number) => horizontal(id, new Date(t), obs);
-        const t = skyMap && skylineCrossingFrom(position, skyMap, kind === 'opens', from.getTime(), dir, position(state.time.getTime()));
-        if (t) next = new Date(t);
-      } else {
-        next = eventFrom(obs, id, kind, from, dir, state.twilight);
-      }
-      if (next) {
-        setTime(next);
+    if (timeSetBy !== 'hand' || !sunDown(obs, state.time)) {
+      const at = timeSetBy === 'hand' ? null : timeSetBy;
+      const t = state.time.getTime();
+      const to = (event: DayEvent, ms: number) => {
+        const next = nextEvent(event, t + dir * ms, dir, obs);
+        return next && { event, next };
+      };
+      const step = (at && to(at, FROM_EVENT_MS)) || to(SUNSET, FROM_ELSEWHERE_MS);
+      if (step) {
+        timeSetBy = step.event;
+        setTime(step.next);
         return;
       }
-      pickedEvent = null;
-    }
-    const sunset = timeByHand && sunDown(obs, state.time) ? null : eventFrom(obs, 'Sun', 'set', state.time, dir, state.twilight);
-    if (sunset) {
-      timeByHand = false;
-      setTime(sunset);
-      return;
     }
   }
   setTime(shiftDays(state.time, dir, tz));
+}
+
+/** The first `event` from `t` on (dir 1), or the last before it (dir -1), within a day and a half. */
+function nextEvent(event: DayEvent, t: number, dir: 1 | -1, obs: ReturnType<typeof observer>): Date | null {
+  const { id, kind } = event;
+  if (kind === 'opens' || kind === 'closes') {
+    if (!skyMap) return null;
+    // By the sky map, at the patch of skyline nearest where the object is now: the last crossing.
+    const position = (at: number) => horizontal(id, new Date(at), obs);
+    const crossing = skylineCrossingFrom(position, skyMap, kind === 'opens', t, dir, position(state.time.getTime()));
+    return crossing === null ? null : new Date(crossing);
+  }
+  return eventFrom(obs, id, kind, new Date(t), dir, state.twilight);
 }
 
 /**
@@ -1382,8 +1400,7 @@ function setPlaying(on: boolean): void {
   if (!on) return;
   // (Playing takes over from a run to a pressed moment, from wherever it has got to.)
   glide = null;
-  timeByHand = false;
-  pickedEvent = null;
+  timeSetBy = null;
   let last = performance.now();
   const tick = (now: number) => {
     // One hour of sky per second of playback.

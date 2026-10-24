@@ -8,11 +8,10 @@ import {
   type BodyId,
   type EventKind,
   type NightData,
-  type PickedEvent,
   type Sample,
 } from './astro';
 import { axisFor } from './axis';
-import { SKYLINE_MIN_MS, openSkyKey, type OpenSky, type Stretch } from './roofline';
+import { SKYLINE_MIN_MS, openSkyKey, type OpenSky, type SkylineKind, type Stretch } from './roofline';
 import { skyColor } from './skycolor';
 import { formatClock, formatDate, formatHour, formatTime, wallTime } from './time';
 
@@ -411,7 +410,7 @@ export function renderInfo(
     onDetails: () => void;
     onScrub: (fraction: number, id: BodyId) => void;
     onScrubEnd: () => void;
-    onJump: (time: Date, id: BodyId, kind?: PickedEvent['kind']) => void;
+    onJump: (time: Date, id: BodyId, kind?: EventKind | SkylineKind) => void;
   },
   /**
    * Where the sky map is on: for each object, when tonight it's in open sky
@@ -697,7 +696,7 @@ export function renderInfo(
       `${eyes ? `<div class="tl-eyes">${eyes}</div>` : ''}<div class="tl-events">${marks}${labels}</div>`,
     );
     for (const button of li.querySelectorAll<HTMLButtonElement>('.tl-events button, .tl-eyes button')) {
-      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id, button.dataset.kind as PickedEvent['kind']));
+      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id, button.dataset.kind as EventKind | SkylineKind));
     }
     // And, by the sky map, what the eyes on the plot can't say: that it's behind the skyline all the while, or that part
     // of its path hasn't been looked at. (When it's in open sky is the eyes' to say, and the plot's tooltip's.)
