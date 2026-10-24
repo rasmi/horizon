@@ -8,10 +8,11 @@ import {
   type BodyId,
   type EventKind,
   type NightData,
+  type PickedEvent,
   type Sample,
 } from './astro';
 import { axisFor } from './axis';
-import { openSkyKey, type OpenSky, type Stretch } from './roofline';
+import { SKYLINE_MIN_MS, openSkyKey, type OpenSky, type Stretch } from './roofline';
 import { skyColor } from './skycolor';
 import { formatClock, formatDate, formatHour, formatTime, wallTime } from './time';
 
@@ -138,8 +139,6 @@ const ICON = {
 
 /** Each eye under an open plot has this much room along the axis, in px: two nearer than that are moved apart. */
 const EYE_ROOM_PX = 17;
-/** A stretch in open sky, or behind something, shorter than this isn't marked in the chart: leaves, a pole. */
-const SKYLINE_MIN_MS = 15 * 60000;
 
 /**
  * When tonight an object comes out from behind the skyline (`opens`) and
@@ -404,7 +403,7 @@ export function renderInfo(
    * along the axis (0–1, or beyond when the pointer is past an end).
    * `onScrubEnd`: let go.
    * `onJump`: one of a row's events was pressed, to go to its time; `kind`
-   * is which event, unless it's a time at the skyline.
+   * is which event.
    */
   actions: {
     onToggle: (id: BodyId) => void;
@@ -412,7 +411,7 @@ export function renderInfo(
     onDetails: () => void;
     onScrub: (fraction: number, id: BodyId) => void;
     onScrubEnd: () => void;
-    onJump: (time: Date, id: BodyId, kind?: EventKind) => void;
+    onJump: (time: Date, id: BodyId, kind?: PickedEvent['kind']) => void;
   },
   /**
    * Where the sky map is on: for each object, when tonight it's in open sky
@@ -684,7 +683,7 @@ export function renderInfo(
             const says = full(ev.opens ? 'In open sky from about' : 'Behind the skyline from about', new Date(ev.t));
             return (
               `<span class="tl-mark" style="left:${pct(ev.t).toFixed(2)}%"></span>` +
-              `<button type="button" class="tl-eye" data-t="${ev.t}" title="${says}. Jump to it" aria-label="${says}. Jump to it" style="left:${at.toFixed(2)}%">${ev.opens ? ICON.seen : ICON.hidden}</button>`
+              `<button type="button" class="tl-eye" data-t="${ev.t}" data-kind="${ev.opens ? 'opens' : 'closes'}" title="${says}. Jump to it" aria-label="${says}. Jump to it" style="left:${at.toFixed(2)}%">${ev.opens ? ICON.seen : ICON.hidden}</button>`
             );
           })
           .join('');
@@ -698,8 +697,7 @@ export function renderInfo(
       `${eyes ? `<div class="tl-eyes">${eyes}</div>` : ''}<div class="tl-events">${marks}${labels}</div>`,
     );
     for (const button of li.querySelectorAll<HTMLButtonElement>('.tl-events button, .tl-eyes button')) {
-      // (The eyes, times at the skyline, have no kind.)
-      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id, button.dataset.kind as EventKind | undefined));
+      button.addEventListener('click', () => actions.onJump(new Date(Number(button.dataset.t)), id, button.dataset.kind as PickedEvent['kind']));
     }
     // And, by the sky map, what the eyes on the plot can't say: that it's behind the skyline all the while, or that part
     // of its path hasn't been looked at. (When it's in open sky is the eyes' to say, and the plot's tooltip's.)

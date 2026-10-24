@@ -258,10 +258,15 @@ export function sunDown(obs: A.Observer, t: Date): boolean {
 /** A kind of event of an object's: its rise, set or transit, or (for the Sun) when darkness starts or ends. */
 export type EventKind = 'rise' | 'set' | 'transit' | 'dark' | 'light';
 
-/** An event that was picked, to go to: the day arrows then step to the next of its kind (see eventFrom). */
+/**
+ * An event that was picked, to go to: the day arrows then step to the next of
+ * its kind (see eventFrom). It may also be when the object comes out from
+ * behind the skyline (`opens`) or goes behind it (`closes`), by the sky map:
+ * see skylineCrossingFrom in roofline.ts.
+ */
 export interface PickedEvent {
   id: BodyId;
-  kind: EventKind;
+  kind: EventKind | 'opens' | 'closes';
 }
 
 /**

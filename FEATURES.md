@@ -41,8 +41,12 @@ how it works inside, see [DEVELOPMENT.md](DEVELOPMENT.md).
   chart; sunset or sunrise; when darkness starts or ends) they go to the
   next of that kind, or the last before it: Saturn's next rise, say, about
   four minutes earlier, or the Moon's, most of an hour later, even when that
-  falls in daylight. A time at the skyline isn't an event of this kind.
-  Where there's no next one, they step as below. From a
+  falls in daylight. A time it comes out from behind the skyline or goes
+  behind it (an eye in the chart, or a time on the view) steps to when it
+  does so at the same patch of skyline a night on or back, by the sky map:
+  the crossing of that kind nearest in the sky, within 15°.
+  Where there's no next one, they step as below: the track has moved off
+  that patch, or crosses sky that hasn't been looked at. From a
   night time you set yourself (with the slider, the date, the hour keys or
   Now) they keep that clock time, a night on or back, to compare night by
   night; from any other time, daytime included, they go to the next sunset

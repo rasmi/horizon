@@ -3,14 +3,14 @@ import './style.css';
 import { setSkyEnabled, skyEnabled, skyOffered } from './sky/preserve';
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import tzlookup from 'tz-lookup';
-import { BODIES, computeNight, eventFrom, interpolate, observableTonight, observer, sunDown, type BodyId, type NightData, type PickedEvent } from './astro';
+import { BODIES, computeNight, eventFrom, horizontal, interpolate, observableTonight, observer, sunDown, type BodyId, type NightData, type PickedEvent } from './astro';
 import { axisFor, nightAxis, type TimeAxis } from './axis';
 import { declination, lookDirection, northOffset, steadyForNorth, turnToward } from './compass';
 import { formatCapture, isWinter, parseCaptures, parseImageDate, type Capture } from './imagery';
 import { Overlay } from './overlay';
 import { midnightMark, renderHourLabels, renderInfo, renderSunTimes, setTimelineNow, skyColorAt, skyState, sliderGradient, sliderTicks } from './panel';
 import { streetViewHfov, type Camera } from './projection';
-import { openSky, openSkyKey, type OpenSky } from './roofline';
+import { openSky, openSkyKey, skylineCrossingFrom, type OpenSky } from './roofline';
 import type { SkyMap } from './sky';
 import type { ChartFrame, SkyChart } from './skychart';
 import { duskShare } from './skycolor';
@@ -1269,7 +1269,16 @@ function shiftDay(dir: 1 | -1): void {
       // (From an hour on: a crossing picked off a plot is a few minutes off the exact one, which mustn't count as the
       // next.)
       const from = new Date(state.time.getTime() + dir * 3600000);
-      const next = eventFrom(obs, pickedEvent.id, pickedEvent.kind, from, dir, state.twilight);
+      const { id, kind } = pickedEvent;
+      let next: Date | null = null;
+      if (kind === 'opens' || kind === 'closes') {
+        // By the sky map, at the patch of skyline nearest where the object is now (the last crossing).
+        const position = (t: number) => horizontal(id, new Date(t), obs);
+        const t = skyMap && skylineCrossingFrom(position, skyMap, kind === 'opens', from.getTime(), dir, position(state.time.getTime()));
+        if (t) next = new Date(t);
+      } else {
+        next = eventFrom(obs, id, kind, from, dir, state.twilight);
+      }
       if (next) {
         setTime(next);
         return;

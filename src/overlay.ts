@@ -5,7 +5,7 @@ import {
   magnitude,
   type AltAz,
   type BodyId,
-  type EventKind,
+  type PickedEvent,
   type Sample,
   type NightData,
   type NightSummary,
@@ -339,14 +339,14 @@ export class Overlay {
    * object's, and doesn't reach Street View (where it would be a step along
    * the street).
    */
-  private hits: { box: Box; id: BodyId; t?: number; kind?: EventKind; says: string }[] = [];
+  private hits: { box: Box; id: BodyId; t?: number; kind?: PickedEvent['kind']; says: string }[] = [];
   private hitEls: HTMLButtonElement[] = [];
 
   constructor(
     container: HTMLElement,
     private onSelect: (id: BodyId) => void,
-    /** `kind` is the event the time is, if it's one: a rise. */
-    private onJump: (t: number, id: BodyId, kind?: EventKind) => void = () => {},
+    /** `kind` is the event the time is, if it's one: a rise, or a time at the skyline. */
+    private onJump: (t: number, id: BodyId, kind?: PickedEvent['kind']) => void = () => {},
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'overlay-canvas';
@@ -750,7 +750,7 @@ export class Overlay {
       skyTimes = this.skyTimeLabels(cam, changes, tz, [...riseSetBoxes, ...this.skyTimes.map((s) => skyTimeBox(s.label))]);
       for (const label of skyTimes) {
         this.skyTimes.push({ label, color });
-        this.hits.push({ box: skyTimeBox(label), id, t: label.t, says: `Go to when ${id} ${label.opens ? 'comes out from behind the skyline' : 'goes behind the skyline'}, and follow it` });
+        this.hits.push({ box: skyTimeBox(label), id, t: label.t, kind: label.opens ? 'opens' : 'closes', says: `Go to when ${id} ${label.opens ? 'comes out from behind the skyline' : 'goes behind the skyline'}, and follow it` });
       }
     } else {
       ctx.globalAlpha = 1;

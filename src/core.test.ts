@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { boldBoundary, computeNight, eventFrom, horizontal, interpolate, observableTonight, observer, sunDown, type BodyId } from './astro';
 import { edgeIndicator, focalLength, lineLabelAnchor, lookAt, project, streetViewHfov, type Camera } from './projection';
+import { skylineCrossingFrom } from './roofline';
 import { readState, shownBodies, stateToSearch } from './state';
 import { nightWindow, shiftDays, tzOffsetMinutes, wallTime, zonedToDate } from './time';
 
@@ -267,6 +268,27 @@ describe('night events', () => {
     // Darkness, by the twilight setting.
     const dark = n.sunEvents.darkStart!;
     expect((eventFrom(obs, 'Sun', 'dark', dark, 1, 12)!.getTime() - dark.getTime()) / 3600000).toBeCloseTo(24, 0);
+  });
+
+  it('steps to the same crossing of the skyline a night on', () => {
+    const obs = observer(40.7, -74);
+    const position = (t: number) => horizontal('Saturn', new Date(t), obs);
+    // A skyline 10° high all round.
+    const wall = { at: (alt: number) => (alt > 10 ? 1 : 0), known: () => true };
+    const rise = n.bodies.get('Saturn')!.rise!.getTime();
+    // Tonight's, coming out over it, found near where Saturn is an hour after rising.
+    const tonight = skylineCrossingFrom(position, wall, true, rise, 1, position(rise + 3600000))!;
+    expect(position(tonight).alt).toBeCloseTo(10, 1);
+    // A night on, and back: the same, four minutes earlier, a sidereal day apart.
+    const next = skylineCrossingFrom(position, wall, true, tonight + 3600000, 1, position(tonight))!;
+    expect((next - tonight) / 3600000).toBeCloseTo(23.93, 1);
+    const last = skylineCrossingFrom(position, wall, true, tonight - 3600000, -1, position(tonight))!;
+    expect((tonight - last) / 3600000).toBeCloseTo(23.93, 1);
+    // Going behind it is another kind; and nothing matches across the sky, or where the sky hasn't been looked at.
+    const sets = skylineCrossingFrom(position, wall, false, tonight + 3600000, 1, position(tonight));
+    expect(sets).toBeNull();
+    expect(skylineCrossingFrom(position, wall, true, tonight + 3600000, 1, { alt: 10, az: (position(tonight).az + 180) % 360 })).toBeNull();
+    expect(skylineCrossingFrom(position, { ...wall, known: () => false }, true, tonight + 3600000, 1, position(tonight))).toBeNull();
   });
 
   it('orders the sun events through the night', () => {
