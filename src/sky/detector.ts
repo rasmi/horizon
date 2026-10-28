@@ -28,11 +28,18 @@ type Accelerator = 'webgpu' | 'wasm';
 /** The runtime, loaded once. */
 let runtime: Promise<unknown> | undefined;
 
+/**
+ * How precisely the graphics card runs the model. LiteRT.js's own default
+ * (fp16 since 2.6.0) answers a little further from the model and gave a
+ * less steady sky map while turning, for no gain in speed.
+ */
+const PRECISION = 'fp32';
+
 /** The model compiled for the graphics card, or null if it can't run there in full. */
 async function compileForGraphicsCard(file: Uint8Array): Promise<CompiledModel | null> {
   if (!isWebGPUSupported()) return null;
   try {
-    const model = await loadAndCompile(file, { accelerator: 'webgpu' });
+    const model = await loadAndCompile(file, { accelerator: 'webgpu', gpuOptions: { precision: PRECISION } });
     if (model.isFullyAccelerated) return model;
     // Sharing a model between graphics card and processor is slower than
     // the processor alone, and isn't possible in every browser.

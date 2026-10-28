@@ -111,7 +111,11 @@ less steady while panning. **To use another file**, put it in
 and change `DEFAULT_MODEL`: nothing else names either.
 
 **The runtime** is LiteRT.js (`@litertjs/core`), on the graphics card
-(WebGPU) where it can and the processor (WebAssembly) where it can't. It
+(WebGPU) where it can and the processor (WebAssembly) where it can't. On
+the graphics card it's asked for 32-bit precision (`PRECISION` in
+`detector.ts`): LiteRT.js's own default, 16-bit since 2.6.0, answers a
+little further from the model and gave a less steady sky map while
+turning, at the same speed. It
 fetches its own WebAssembly files by name when it starts: the dev server
 serves them from `node_modules`, and a build copies them to `litert/`
 beside the page (`vite.config.ts`). A build is 50 MB with them and the
