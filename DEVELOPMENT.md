@@ -101,7 +101,7 @@ LiteRT with its last step and the reading of its scores inside the file:
 one 512 × 512 image in, and for each point of a 128 × 128 grid, how far
 sky is ahead of the buildings, trees and ground together, and which class
 is ahead. One file of it is in `third_party/pp-mobileseg/`: `x2-fp16` in
-`model.ts`, `pp-mobileseg-base-ade-512-x2-fp16.tflite`, 12.9 MB, with
+`model.ts`, `pp-mobileseg-base-ade-512-x2-fp16.tflite`, 12.8 MB, with
 16-bit weights.
 
 It was settled on by hand on 7 October 2026, over the same model with
@@ -122,6 +122,20 @@ beside the page (`vite.config.ts`). A build is 50 MB with them and the
 model, of which a visitor with the sky map on fetches the model and one
 runtime (about 13 MB and 9.5 MB); with it off, or without WebGPU, none of
 it.
+
+**A potential issue, left as it is: the runtime's files keep their names
+from one build to the next**, while the app's code (LiteRT.js's own
+JavaScript among it) gets a new hashed name with every build. GitHub Pages
+serves every file with `cache-control: max-age=600`, and on a normal
+reload Chrome checks the page itself but reuses files it fetched less than
+10 minutes before. So someone who had the site open shortly before a
+deploy that changes LiteRT.js's version, and then reloads, can get the new
+code with the old runtime: the sky map doesn't start for that load, and
+the next load after those files are 10 minutes old (or a hard reload)
+puts it right. Copying them to a folder named by LiteRT.js's version
+(`litert/<version>/`, the path given to `detector.ts` by the build) would
+close it. LiteRT.js's own docs and demos serve the files from a fixed
+folder and say nothing on it.
 
 **Nothing shows until the model is ready, and nothing if it never is.**
 `startSky` hands back a `ready` promise, and `main.ts` puts the chart on

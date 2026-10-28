@@ -19,8 +19,8 @@ export interface SkyModel {
 }
 
 export const MODELS = {
-  /** Weights and biases 16 bits long: 12.9 MB. Its sky scores are within about 0.02 of the 32-bit file's. */
-  'x2-fp16': { url: x2fp16, about: '16-bit weights, 12.9 MB' },
+  /** Weights 16 bits long: 12.8 MB. Its sky scores are within about 0.03 of the 32-bit model's. */
+  'x2-fp16': { url: x2fp16, about: '16-bit weights, 12.8 MB' },
 } satisfies Record<string, SkyModel>;
 export type ModelId = keyof typeof MODELS;
 

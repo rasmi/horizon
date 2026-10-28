@@ -15,9 +15,9 @@ Apache License, Version 2.0, and the model file here is offered under the
 same license: [LICENSE](LICENSE).
 
 **Changed:** converted to LiteRT (`.tflite`), taking images channel-last;
-three steps written another way so that it runs on a graphics card, none
+two steps written another way so that it runs on a graphics card, neither
 changing what it computes; the model's own last step (its scores stretched
 to twice as fine a grid) put inside the file, with a step after it that
 gives, for each point, how far sky's score is ahead of the buildings',
 trees' and ground's together and which class is ahead, in place of a score
-for each of 150 classes; and its weights and biases stored 16 bits long.
+for each of 150 classes; and its weights stored 16 bits long.
